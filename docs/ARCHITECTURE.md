@@ -117,7 +117,7 @@ CREATE TABLE readings (
     device_id    BIGINT           NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     temperature  REAL             NOT NULL,   -- already-decoded °C from raw uint16 t
     lux          INTEGER          NOT NULL,   -- already-decoded lux from raw uint16 l
-    battery_raw  INTEGER,                     -- nullable; raw ADC counts (uint16) — decoded at read time
+    battery_raw  INTEGER,                     -- nullable; raw battery voltage in millivolts (uint16). Convert to volts at the API/UI layer: battery_v = battery_raw / 1000.0
     rssi         SMALLINT                     -- nullable; not all firmware reports it
 );
 
