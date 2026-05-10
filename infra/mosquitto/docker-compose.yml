@@ -28,8 +28,8 @@ services:
     ports:
       - "1883:1883"
     volumes:
-      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ../mosquitto/scripts:/mosquitto/config/scripts:ro
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./scripts:/mosquitto/config/scripts:ro
       - mosquitto-data:/mosquitto/data
 
 volumes:
