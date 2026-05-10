@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pwd -W)",
+      "Bash(docker.exe run *)",
+      "Bash(echo \"IMPORT EXIT: $?\")"
+    ]
+  }
+}
