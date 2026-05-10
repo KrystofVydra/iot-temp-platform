@@ -18,5 +18,4 @@ dist/
 !.env.example
 .git/
 .gitignore
-README.md
 tests/

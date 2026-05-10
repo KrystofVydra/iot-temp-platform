@@ -52,6 +52,19 @@ select = [
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI uses Depends/Query/etc. as default values by design — allow them.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Form",
+    "fastapi.Security",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

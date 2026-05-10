@@ -1,31 +1,41 @@
-"""Database engine and declarative base.
+"""Async SQLAlchemy engine, session factory, declarative base, and FastAPI dep.
 
-The async engine targets asyncpg. ``DATABASE_URL`` is read lazily so that
-importing this module (e.g. from Alembic env.py for ``Base.metadata``) does
-not require the env var to be set at import time.
+Engine and session factory are lazily constructed via cached getters so that
+importing this module does not require ``DATABASE_URL`` to be set.
 """
 
 from __future__ import annotations
 
-import os
+from collections.abc import AsyncIterator
+from functools import cache
 
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import DeclarativeBase
+
+from .config import get_settings
 
 
 class Base(DeclarativeBase):
     """Declarative base for all ORM models."""
 
 
-def get_database_url() -> str:
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise RuntimeError(
-            "DATABASE_URL is not set. Expected an asyncpg URL such as "
-            "postgresql+asyncpg://user:pass@host:5432/db"
-        )
-    return url
+@cache
+def get_engine() -> AsyncEngine:
+    return create_async_engine(get_settings().DATABASE_URL, pool_pre_ping=True)
 
 
-def create_engine() -> AsyncEngine:
-    return create_async_engine(get_database_url(), pool_pre_ping=True)
+@cache
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(get_engine(), expire_on_commit=False)
+
+
+async def get_db() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency: yields an ``AsyncSession`` and closes it on exit."""
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        yield session
