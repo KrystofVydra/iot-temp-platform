@@ -117,8 +117,8 @@ CREATE TABLE readings (
     device_id    BIGINT           NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     temperature  REAL             NOT NULL,   -- already-decoded °C from raw uint16 t
     lux          INTEGER          NOT NULL,   -- already-decoded lux from raw uint16 l
-    battery_raw  INTEGER          NOT NULL,   -- raw ADC counts (uint16) — decoded at read time
-    rssi         SMALLINT
+    battery_raw  INTEGER,                     -- nullable; raw ADC counts (uint16) — decoded at read time
+    rssi         SMALLINT                     -- nullable; not all firmware reports it
 );
 
 SELECT create_hypertable('readings', 'time');
@@ -130,7 +130,7 @@ CREATE INDEX readings_device_time_idx ON readings (device_id, time DESC);
 
 - `temperature` and `lux` are stored decoded because their decoding is fixed by the sensor hardware and unlikely to change.
 - `battery_raw` is kept as the raw ADC count so we can re-derive voltage / percentage if the divider network or reference voltage changes between hardware revisions.
-- `rssi` is nullable — older firmware revisions may not include it.
+- `battery_raw` and `rssi` are nullable: `battery_raw` is nullable to support future wall-powered devices; `rssi` is optional firmware metadata.
 - Phase 6 adds: continuous aggregates for hourly/daily rollups, a compression policy for readings older than 7 days, a retention policy (TBD), and a "device offline" view derived from `last_seen_at`.
 
 ---

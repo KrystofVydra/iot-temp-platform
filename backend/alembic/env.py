@@ -19,6 +19,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from app import models  # noqa: F401  ensures models register with Base.metadata
+from app.db import Base
+
 # Alembic Config object provides access to .ini values.
 config = context.config
 
@@ -35,10 +38,7 @@ if not database_url:
     )
 config.set_main_option("sqlalchemy.url", database_url)
 
-# Phase 2 will populate this with `Base.metadata` from the SQLAlchemy models.
-# Until then, autogenerate has nothing to compare against; manually written
-# migrations work fine.
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:

@@ -34,6 +34,7 @@ services:
       - "9001:9001"
     volumes:
       - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./infra/mosquitto/scripts:/mosquitto/config/scripts:ro
       - ./infra/mosquitto/passwords:/mosquitto/config/passwords:ro
       - ./infra/mosquitto/acl:/mosquitto/config/acl:ro
       - ./.docker-data/mosquitto/data:/mosquitto/data
