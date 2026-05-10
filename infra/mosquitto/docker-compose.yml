@@ -6,13 +6,14 @@
 # platform's services.
 #
 # Storage layout:
-#   - mosquitto.conf and helper scripts are bind-mounted read-only from the repo.
+#   - mosquitto.conf and helper scripts are baked into the image via the
+#     local Dockerfile. (Coolify has a bug where single files aren't copied
+#     to the application directory during deploys, which broke bind mounts.)
 #   - The mosquitto-data named volume backs /mosquitto/data and persists:
 #       - retained / queued message state (the broker's own use)
 #       - the passwords and acl files (generated at runtime by the helpers)
 #     Both lookup paths are pointed at /mosquitto/data in mosquitto.conf so
-#     the named volume can carry them without overlaying the bind-mounted
-#     /mosquitto/config tree.
+#     the named volume carries them across container rebuilds.
 #
 # Bootstrap:
 #   docker compose -f infra/mosquitto/docker-compose.yml up -d
@@ -22,14 +23,12 @@
 
 services:
   mosquitto:
-    image: eclipse-mosquitto:2.0
+    build: .
     container_name: mosquitto
     restart: unless-stopped
     ports:
       - "1883:1883"
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./scripts:/mosquitto/config/scripts:ro
       - mosquitto-data:/mosquitto/data
 
 volumes:
