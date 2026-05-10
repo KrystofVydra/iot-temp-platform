@@ -30,6 +30,13 @@ services:
       - "1883:1883"
     volumes:
       - mosquitto-data:/mosquitto/data
+    networks:
+      - default
+      - coolify
 
 volumes:
   mosquitto-data:
+
+networks:
+  coolify:
+    external: true
