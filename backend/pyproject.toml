@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "iot-backend"
 version = "0.1.0"
 description = "FastAPI REST API for the IoT temperature platform"
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "IoT Temperature Platform" }]
