@@ -36,6 +36,7 @@ fi
 PASSWORD="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24)"
 
 mosquitto_passwd -b "$PASSWORD_FILE" "$DEVICE_KEY" "$PASSWORD"
+chown root:root "$PASSWORD_FILE" && chmod 0700 "$PASSWORD_FILE"
 
 # Append a per-device ACL block confining this user to its own topic tree.
 {
@@ -44,6 +45,7 @@ mosquitto_passwd -b "$PASSWORD_FILE" "$DEVICE_KEY" "$PASSWORD"
     echo "user ${DEVICE_KEY}"
     echo "topic readwrite devices/${DEVICE_KEY}/#"
 } >> "$ACL_FILE"
+chown root:root "$ACL_FILE" && chmod 0700 "$ACL_FILE"
 
 # SIGHUP makes Mosquitto re-read passwords + ACL without dropping connections.
 # In the official image Mosquitto runs as PID 1.
