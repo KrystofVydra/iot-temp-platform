@@ -23,10 +23,11 @@ logging.basicConfig(
 
 def create_app() -> FastAPI:
     app = FastAPI(title="IoT Temperature Platform API", version="0.1.0")
-    if settings.CORS_ORIGINS:
+    origins = settings.cors_origins_list
+    if origins:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=settings.CORS_ORIGINS,
+            allow_origins=origins,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],

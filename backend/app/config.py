@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from functools import cache
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,16 +18,14 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     API_TOKEN: str
     LOG_LEVEL: str = "INFO"
-    CORS_ORIGINS: list[str] = []
+    # Comma-separated origins. Kept as a raw string because pydantic-settings v2
+    # runs its own JSON parser before validators on list-typed fields, which
+    # mangles comma-separated env values.
+    CORS_ORIGINS: str = ""
 
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def _split_cors_origins(cls, value: object) -> object:
-        # Pydantic-settings doesn't comma-split list[str] from env by default —
-        # do it here so callers can write CORS_ORIGINS=a,b,c instead of JSON.
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
 
 @cache
