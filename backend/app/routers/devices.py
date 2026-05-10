@@ -116,9 +116,13 @@ async def get_device_readings(
     n, unit = match.group(1), match.group(2)
     interval_str = f"{n} {_BUCKET_UNITS[unit]}"
 
+    # interval_str is already validated by the regex above and mapped through
+    # _BUCKET_UNITS, so it's safe to interpolate as a SQL literal. Binding it
+    # as :bucket doesn't work because SQLAlchemy's parser mis-handles the
+    # adjacent `::interval` cast (sees `:bucket::interval` as one token).
     sql = text(
-        """
-        SELECT time_bucket(:bucket::interval, time) AS bucket_time,
+        f"""
+        SELECT time_bucket('{interval_str}'::interval, time) AS bucket_time,
                AVG(temperature)::REAL AS temperature,
                AVG(lux)::INTEGER AS lux,
                AVG(battery_raw)::INTEGER AS battery_raw,
@@ -133,7 +137,6 @@ async def get_device_readings(
     result = await session.execute(
         sql,
         {
-            "bucket": interval_str,
             "device_id": device_id,
             "from_time": from_,
             "to_time": to,
