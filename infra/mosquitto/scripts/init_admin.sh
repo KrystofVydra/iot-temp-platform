@@ -15,8 +15,8 @@
 
 set -eu
 
-PASSWORD_FILE="/mosquitto/config/passwords"
-ACL_FILE="/mosquitto/config/acl"
+PASSWORD_FILE="/mosquitto/data/passwords"
+ACL_FILE="/mosquitto/data/acl"
 
 if [ -z "${ADMIN_PASSWORD:-}" ]; then
     echo "Error: ADMIN_PASSWORD env var must be set." >&2

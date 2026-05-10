@@ -1,0 +1,36 @@
+# Standalone Mosquitto compose file.
+#
+# Use this on the VPS (deployed via Coolify, or run directly with
+# `docker compose -f infra/mosquitto/docker-compose.yml up -d`) when you
+# want to run the broker on its own — independent of the rest of the
+# platform's services.
+#
+# Storage layout:
+#   - mosquitto.conf and helper scripts are bind-mounted read-only from the repo.
+#   - The mosquitto-data named volume backs /mosquitto/data and persists:
+#       - retained / queued message state (the broker's own use)
+#       - the passwords and acl files (generated at runtime by the helpers)
+#     Both lookup paths are pointed at /mosquitto/data in mosquitto.conf so
+#     the named volume can carry them without overlaying the bind-mounted
+#     /mosquitto/config tree.
+#
+# Bootstrap:
+#   docker compose -f infra/mosquitto/docker-compose.yml up -d
+#   docker exec -e ADMIN_PASSWORD='...' -it mosquitto \
+#       sh /mosquitto/config/scripts/init_admin.sh
+#   docker compose -f infra/mosquitto/docker-compose.yml restart mosquitto
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ../mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ../mosquitto/scripts:/mosquitto/config/scripts:ro
+      - mosquitto-data:/mosquitto/data
+
+volumes:
+  mosquitto-data:

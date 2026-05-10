@@ -11,8 +11,8 @@
 
 set -eu
 
-PASSWORD_FILE="/mosquitto/config/passwords"
-ACL_FILE="/mosquitto/config/acl"
+PASSWORD_FILE="/mosquitto/data/passwords"
+ACL_FILE="/mosquitto/data/acl"
 
 if [ "$#" -ne 1 ] || [ -z "${1:-}" ]; then
     echo "Usage: $0 <device_key>" >&2
