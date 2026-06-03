@@ -75,3 +75,11 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
+
+export function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) return <CenteredSpinner />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!user.is_admin) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}

@@ -13,6 +13,11 @@ export function Layout() {
           </Link>
           <div className="flex items-center gap-3 text-sm">
             {user && <span className="text-gray-600">{user.display_name}</span>}
+            {user?.is_admin && (
+              <Link to="/admin" className="text-gray-600 hover:text-gray-900">
+                Admin
+              </Link>
+            )}
             <button
               onClick={() => {
                 void logout();

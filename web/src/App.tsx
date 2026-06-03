@@ -1,6 +1,7 @@
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
-import { AuthProvider, RequireAuth } from './components/AuthGate';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { AdminLayout } from './components/AdminLayout';
+import { AuthProvider, RequireAdmin, RequireAuth } from './components/AuthGate';
 import { Layout } from './components/Layout';
 import { ApiError } from './lib/api';
 import { Dashboard } from './pages/Dashboard';
@@ -9,13 +10,23 @@ import { ForgotPassword } from './pages/ForgotPassword';
 import { Login } from './pages/Login';
 import { NotFound } from './pages/NotFound';
 import { SetPassword } from './pages/SetPassword';
+import { AdminDeviceDetail } from './pages/admin/AdminDeviceDetail';
+import { AdminDevices } from './pages/admin/AdminDevices';
+import { AdminUserDetail } from './pages/admin/AdminUserDetail';
+import { AdminUsers } from './pages/admin/AdminUsers';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: (failureCount, error) => {
-        // Don't waste retries on auth failures — AuthProvider will redirect.
-        if (error instanceof ApiError && error.status === 401) return false;
+        // Don't waste retries on auth/permission failures. 403 from admin
+        // endpoints is handled by RequireAdmin; 401 redirects via onError.
+        if (
+          error instanceof ApiError &&
+          (error.status === 401 || error.status === 403)
+        ) {
+          return false;
+        }
         return failureCount < 1;
       },
       refetchOnWindowFocus: false,
@@ -23,9 +34,8 @@ const queryClient = new QueryClient({
   },
   queryCache: new QueryCache({
     onError: (error) => {
-      // Any query 401 → kick the user back to /login. Hard navigation drops
-      // any stale cached data along with the page state, so we don't need to
-      // imperatively reset queryClient.
+      // Only 401 redirects — 403 is just "not allowed for this user" and
+      // should be surfaced inline by the page, not bounce them to /login.
       if (
         error instanceof ApiError &&
         error.status === 401 &&
@@ -55,6 +65,20 @@ function App() {
             >
               <Route path="/" element={<Dashboard />} />
               <Route path="/devices/:id" element={<DeviceDetail />} />
+              <Route
+                path="/admin"
+                element={
+                  <RequireAdmin>
+                    <AdminLayout />
+                  </RequireAdmin>
+                }
+              >
+                <Route index element={<Navigate to="/admin/users" replace />} />
+                <Route path="users" element={<AdminUsers />} />
+                <Route path="users/:id" element={<AdminUserDetail />} />
+                <Route path="devices" element={<AdminDevices />} />
+                <Route path="devices/:id" element={<AdminDeviceDetail />} />
+              </Route>
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -1,6 +1,20 @@
-import { useQuery } from '@tanstack/react-query';
-import { apiFetch, ApiError } from './api';
-import type { Device, DeviceWithLatestReading, Reading, TimeRange } from './types';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ApiError, apiFetch, postJson } from './api';
+import type {
+  CreateDeviceResponse,
+  CreateUserResponse,
+  Device,
+  DeviceAdmin,
+  DevicePatch,
+  DeviceStatus,
+  DeviceWithLatestReading,
+  Reading,
+  ResetLinkResponse,
+  RotateMqttResponse,
+  TimeRange,
+  UserAdmin,
+  UserAdminDetail,
+} from './types';
 
 export function useDevices() {
   return useQuery({
@@ -61,4 +75,160 @@ function computeRangeParams(range: TimeRange): { from: string; to: string; bucke
     to,
     bucket: ranges[range].bucket,
   };
+}
+
+// =============================================================================
+// Admin hooks
+// =============================================================================
+
+export function useAdminUsers() {
+  return useQuery({
+    queryKey: ['admin', 'users'],
+    queryFn: () => apiFetch<UserAdmin[]>('/admin/users'),
+  });
+}
+
+export function useAdminUser(id: number) {
+  return useQuery({
+    queryKey: ['admin', 'users', id],
+    queryFn: () => apiFetch<UserAdminDetail>(`/admin/users/${id}`),
+  });
+}
+
+export function useAdminDevices(filter: { q?: string; status?: DeviceStatus }) {
+  const params = new URLSearchParams();
+  if (filter.q) params.set('q', filter.q);
+  if (filter.status) params.set('status', filter.status);
+  const qs = params.toString();
+  return useQuery({
+    queryKey: [
+      'admin',
+      'devices',
+      { q: filter.q ?? '', status: filter.status ?? '' },
+    ],
+    queryFn: () =>
+      apiFetch<DeviceAdmin[]>(`/admin/devices${qs ? `?${qs}` : ''}`),
+  });
+}
+
+export function useAdminDevice(id: number) {
+  return useQuery({
+    queryKey: ['admin', 'devices', id],
+    queryFn: () => apiFetch<DeviceAdmin>(`/admin/devices/${id}`),
+  });
+}
+
+export function useCreateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { email: string; display_name: string }) =>
+      postJson<CreateUserResponse>('/admin/users', input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
+}
+
+export function useDeactivateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/admin/users/${id}/deactivate`, { method: 'POST' }),
+    onSuccess: (_data, id) => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'users', id] });
+    },
+  });
+}
+
+export function useReactivateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/admin/users/${id}/reactivate`, { method: 'POST' }),
+    onSuccess: (_data, id) => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'users', id] });
+    },
+  });
+}
+
+export function useDeleteUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/admin/users/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
+    },
+  });
+}
+
+export function useSendResetLink() {
+  return useMutation({
+    mutationFn: (id: number) =>
+      postJson<ResetLinkResponse>(`/admin/users/${id}/reset-link`, {}),
+  });
+}
+
+export function useCreateDevice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      user_id: number;
+      device_key: string;
+      name: string;
+      location: string | null;
+    }) => postJson<CreateDeviceResponse>('/admin/devices', input),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'users', vars.user_id] });
+    },
+  });
+}
+
+export function useUpdateDevice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: DevicePatch }) =>
+      apiFetch<DeviceAdmin>(`/admin/devices/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'devices', vars.id] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
+}
+
+export function useDeleteDevice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/admin/devices/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
+}
+
+export function useRotateMqttPassword() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      postJson<RotateMqttResponse>(
+        `/admin/devices/${id}/rotate-mqtt-password`,
+        {},
+      ),
+    onSuccess: (_data, id) => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'devices', id] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
 }
