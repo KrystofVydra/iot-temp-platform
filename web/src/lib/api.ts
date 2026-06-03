@@ -10,13 +10,13 @@ export class ApiError extends Error {
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('api_token');
-  if (!token) throw new ApiError(401, 'no api token configured');
-
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
+    // Send the session cookie cross-origin. Backend must respond with
+    // Access-Control-Allow-Credentials: true (it does, see CORS config).
+    credentials: 'include',
     headers: {
-      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
       ...init?.headers,
     },
   });
@@ -27,4 +27,8 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     throw new ApiError(res.status, text || res.statusText);
   }
   return res.json();
+}
+
+export function postJson<T = unknown>(path: string, body: unknown): Promise<T> {
+  return apiFetch<T>(path, { method: 'POST', body: JSON.stringify(body) });
 }

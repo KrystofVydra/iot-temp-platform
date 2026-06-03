@@ -1,3 +1,10 @@
+export type User = {
+  id: number;
+  email: string;
+  display_name: string;
+  is_admin: boolean;
+};
+
 export type Device = {
   id: number;
   device_key: string;
