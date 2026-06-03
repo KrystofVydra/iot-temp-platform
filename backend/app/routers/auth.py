@@ -39,6 +39,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 GENERIC_INVALID = "invalid credentials"
 
+# Maps the wire-format ``kind`` query param to the value stored in auth_tokens.kind.
+# Wire is short and SPA-friendly; DB value is the canonical token kind.
+_KIND_WIRE_TO_DB = {"invitation": "invitation", "reset": "password_reset"}
+
 
 # --- request / response shapes --------------------------------------------
 
@@ -176,6 +180,45 @@ async def logout(
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)) -> UserOut:
     return _user_out(user)
+
+
+@router.get("/validate-token")
+async def validate_token(
+    token: str,
+    kind: str,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Cheap pre-flight check used by the SPA before showing the set-password form.
+
+    Returns 200 ``{valid: true}`` if the token exists, matches ``kind``, hasn't
+    been used, and isn't expired. Returns 400 ``{valid: false, reason: ...}``
+    otherwise — ``"expired"`` only when the token would otherwise have been
+    valid; everything else (missing, wrong kind, already used) collapses to
+    ``"invalid"`` so we don't leak detail. Does NOT consume the token.
+    """
+    db_kind = _KIND_WIRE_TO_DB.get(kind)
+    if db_kind is None:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"valid": False, "reason": "invalid"}
+
+    row = (
+        await db.execute(
+            select(AuthToken).where(
+                AuthToken.token_hash == hash_token(token),
+                AuthToken.kind == db_kind,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if row is None or row.used_at is not None:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"valid": False, "reason": "invalid"}
+    if row.expires_at <= datetime.now(UTC):
+        response.status_code = status.HTTP_400_BAD_REQUEST
+        return {"valid": False, "reason": "expired"}
+
+    return {"valid": True}
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordOut)

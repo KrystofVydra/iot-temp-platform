@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../components/AuthGate';
-import { ApiError, postJson } from '../lib/api';
+import { ApiError, apiFetch, postJson } from '../lib/api';
 
 type Mode = 'invitation' | 'reset';
+type ValidationStatus = 'loading' | 'valid' | 'expired' | 'invalid';
 
 export function SetPassword() {
   const [params] = useSearchParams();
@@ -11,12 +12,55 @@ export function SetPassword() {
   const { refresh } = useAuth();
 
   const token = params.get('token') ?? '';
-  const mode: Mode = params.get('mode') === 'invitation' ? 'invitation' : 'reset';
+  const rawMode = params.get('mode');
+  // Strict: only the exact values 'invitation' or 'reset' are accepted. An
+  // unknown mode short-circuits to the invalid card without an API call.
+  const mode: Mode | null =
+    rawMode === 'invitation' || rawMode === 'reset' ? rawMode : null;
+
+  const [status, setStatus] = useState<ValidationStatus>(
+    mode === null ? 'invalid' : 'loading',
+  );
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Pre-validate the token server-side so the user sees the expired/invalid
+  // state immediately instead of after typing a password.
+  useEffect(() => {
+    if (mode === null) return;
+    let cancelled = false;
+
+    const validate = async () => {
+      try {
+        const qs = new URLSearchParams({ token, kind: mode });
+        await apiFetch(`/auth/validate-token?${qs.toString()}`);
+        if (!cancelled) setStatus('valid');
+      } catch (err) {
+        if (cancelled) return;
+        let reason: string | null = null;
+        if (err instanceof ApiError) {
+          try {
+            const body: unknown = JSON.parse(err.message);
+            if (typeof body === 'object' && body !== null && 'reason' in body) {
+              const r = (body as { reason: unknown }).reason;
+              if (typeof r === 'string') reason = r;
+            }
+          } catch {
+            // body wasn't JSON; treat as invalid
+          }
+        }
+        setStatus(reason === 'expired' ? 'expired' : 'invalid');
+      }
+    };
+
+    void validate();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, token]);
 
   const passwordTooShort = password.length > 0 && password.length < 8;
   const mismatch = confirm.length > 0 && password !== confirm;
@@ -25,7 +69,7 @@ export function SetPassword() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || mode === null) return;
     setError(null);
     setSubmitting(true);
     try {
@@ -51,22 +95,49 @@ export function SetPassword() {
     }
   };
 
-  if (!token) {
+  if (status === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md space-y-4">
-          <h1 className="text-xl font-semibold">Missing token</h1>
+        <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md text-center">
+          <p className="text-sm text-gray-500">Checking link…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'expired') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md space-y-4 text-center">
+          <h1 className="text-xl font-semibold">Link expired</h1>
           <p className="text-sm text-gray-600">
-            This page requires a valid invitation or reset link.
+            This link has expired. Ask your admin for a new one.
           </p>
-          <Link to="/login" className="text-sm text-blue-600 hover:underline">
-            Back to login
+          <Link to="/login" className="inline-block text-sm text-blue-600 hover:underline">
+            Back to login &rarr;
           </Link>
         </div>
       </div>
     );
   }
 
+  if (status === 'invalid' || mode === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md space-y-4 text-center">
+          <h1 className="text-xl font-semibold">Link not usable</h1>
+          <p className="text-sm text-gray-600">
+            This link is invalid or no longer usable. Ask your admin for a new one.
+          </p>
+          <Link to="/login" className="inline-block text-sm text-blue-600 hover:underline">
+            Back to login &rarr;
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // status === 'valid', mode is Mode
   const heading = mode === 'invitation' ? 'Set your password' : 'Choose a new password';
   const buttonLabel =
     mode === 'invitation' ? 'Set password and sign in' : 'Update password';
