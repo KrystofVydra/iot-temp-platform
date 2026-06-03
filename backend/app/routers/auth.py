@@ -207,7 +207,7 @@ async def forgot_password(
         )
         await db.commit()
         if settings.EXPOSE_AUTH_LINKS:
-            reset_url = f"{settings.FRONTEND_ORIGIN}/reset-password?token={raw}"
+            reset_url = f"{settings.FRONTEND_ORIGIN}/set-password?token={raw}&mode=reset"
 
     return ForgotPasswordOut(reset_url=reset_url)
 

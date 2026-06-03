@@ -7,6 +7,7 @@ import { Dashboard } from './pages/Dashboard';
 import { DeviceDetail } from './pages/DeviceDetail';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { Login } from './pages/Login';
+import { NotFound } from './pages/NotFound';
 import { SetPassword } from './pages/SetPassword';
 
 const queryClient = new QueryClient({
@@ -55,6 +56,7 @@ function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/devices/:id" element={<DeviceDetail />} />
             </Route>
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
       </BrowserRouter>

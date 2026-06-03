@@ -87,7 +87,7 @@ async def main() -> int:
             expires_at,
         )
 
-        url = f"{frontend}/accept-invitation?token={raw}"
+        url = f"{frontend}/set-password?token={raw}&mode=invitation"
         print()
         print("=" * 64)
         print("Invitation issued.")
