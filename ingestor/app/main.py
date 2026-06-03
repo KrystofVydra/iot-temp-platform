@@ -103,6 +103,14 @@ async def run() -> None:
                 await client.subscribe(settings.MQTT_TOPIC)
                 log.info("subscribed, waiting for messages")
                 async for message in client.messages:
+                    # Retained messages are replayed by the broker on every
+                    # (re)subscribe; ingesting them stamps stale telemetry with
+                    # a fresh "now" and falsely keeps devices "online".
+                    if message.retain:
+                        log.info(
+                            "ignoring retained message on %s", str(message.topic)
+                        )
+                        continue
                     await _handle_message(str(message.topic), bytes(message.payload))
         except aiomqtt.MqttError as exc:
             log.error("mqtt error: %s — reconnecting in 5s", exc)
