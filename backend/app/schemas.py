@@ -110,6 +110,10 @@ class ResetLinkOut(BaseModel):
     reset_url: str
 
 
+class InvitationLinkOut(BaseModel):
+    invitation_url: str
+
+
 class DeviceAdminOut(BaseModel):
     """Full device row in admin responses, with embedded owner."""
 

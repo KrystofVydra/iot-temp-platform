@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { useAdminDevices, useDeleteDevice } from '../../lib/hooks';
+import { useAdminDevices } from '../../lib/hooks';
 import type { DeviceAdmin, DeviceStatus } from '../../lib/types';
 
 const ONLINE_WINDOW_MS = 5 * 60_000;
@@ -20,10 +20,10 @@ const STATUS_CHOICES: { value: DeviceStatus | null; label: string }[] = [
 ];
 
 export function AdminDevices() {
+  const navigate = useNavigate();
   const [searchInput, setSearchInput] = useState('');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<DeviceStatus | null>(null);
-  const del = useDeleteDevice();
 
   // Debounce the search input 300ms before triggering the query.
   useEffect(() => {
@@ -35,16 +35,6 @@ export function AdminDevices() {
     q: q || undefined,
     status: status ?? undefined,
   });
-
-  const handleDelete = (d: DeviceAdmin) => {
-    if (
-      !window.confirm(
-        `Delete ${d.device_key}? All of its readings will be lost.`,
-      )
-    )
-      return;
-    del.mutate(d.id);
-  };
 
   return (
     <div>
@@ -102,26 +92,23 @@ export function AdminDevices() {
                 <th className="px-4 py-2">Status</th>
                 <th className="px-4 py-2">MQTT</th>
                 <th className="px-4 py-2">Last Seen</th>
-                <th className="px-4 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {devices.map((d) => {
                 const online = deviceOnline(d);
                 return (
-                  <tr key={d.id} className="border-t">
-                    <td className="px-4 py-2 font-mono">
-                      <Link
-                        to={`/admin/devices/${d.id}`}
-                        className="text-blue-600 hover:underline"
-                      >
-                        {d.device_key}
-                      </Link>
-                    </td>
+                  <tr
+                    key={d.id}
+                    onClick={() => navigate(`/admin/devices/${d.id}`)}
+                    className="border-t hover:bg-gray-50 cursor-pointer"
+                  >
+                    <td className="px-4 py-2 font-mono">{d.device_key}</td>
                     <td className="px-4 py-2">{d.name}</td>
                     <td className="px-4 py-2 text-gray-600">
                       <Link
                         to={`/admin/users/${d.owner.id}`}
+                        onClick={(e) => e.stopPropagation()}
                         className="hover:underline"
                       >
                         {d.owner.email}
@@ -157,28 +144,6 @@ export function AdminDevices() {
                             addSuffix: true,
                           })
                         : 'Never'}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <details className="relative inline-block">
-                        <summary className="cursor-pointer list-none text-gray-500 hover:text-gray-900 px-2 select-none">
-                          ⋯
-                        </summary>
-                        <div className="absolute right-0 mt-1 bg-white shadow-md border rounded text-sm w-32 z-10">
-                          <Link
-                            to={`/admin/devices/${d.id}`}
-                            className="block px-3 py-2 hover:bg-gray-50"
-                          >
-                            View
-                          </Link>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(d)}
-                            className="block w-full text-left px-3 py-2 hover:bg-gray-50 text-red-600"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </details>
                     </td>
                   </tr>
                 );

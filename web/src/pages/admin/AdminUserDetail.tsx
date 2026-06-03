@@ -1,9 +1,17 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
+import { useAuth } from '../../components/AuthGate';
 import { AddDeviceModal } from '../../components/admin/AddDeviceModal';
 import { MqttCredentialsModal } from '../../components/admin/MqttCredentialsModal';
-import { useAdminUser } from '../../lib/hooks';
+import { ResendInvitationModal } from '../../components/admin/ResendInvitationModal';
+import { ResetLinkModal } from '../../components/admin/ResetLinkModal';
+import {
+  useAdminUser,
+  useDeactivateUser,
+  useDeleteUser,
+  useReactivateUser,
+} from '../../lib/hooks';
 import type { DeviceForUser } from '../../lib/types';
 
 const ONLINE_WINDOW_MS = 5 * 60_000;
@@ -15,13 +23,26 @@ function isOnline(d: DeviceForUser): boolean {
   );
 }
 
+const secondaryBtn =
+  'px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-700';
+const destructiveBtn =
+  'px-3 py-1 text-sm bg-red-50 hover:bg-red-100 rounded text-red-700';
+
 export function AdminUserDetail() {
   const { id } = useParams<{ id: string }>();
   const userId = parseInt(id!, 10);
+  const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
+
   const { data, isLoading, error } = useAdminUser(userId);
+  const deactivate = useDeactivateUser();
+  const reactivate = useReactivateUser();
+  const del = useDeleteUser();
 
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [rotateForDeviceId, setRotateForDeviceId] = useState<number | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resendOpen, setResendOpen] = useState(false);
 
   if (isLoading) return <div className="text-sm text-gray-500">Loading…</div>;
   if (error)
@@ -32,11 +53,28 @@ export function AdminUserDetail() {
     );
   if (!data) return null;
 
+  const isMe = currentUser?.id === data.id;
+
   const statusBadge = !data.is_active
     ? { cls: 'bg-gray-100 text-gray-600', label: 'Deactivated' }
     : !data.has_password
       ? { cls: 'bg-yellow-100 text-yellow-700', label: 'Pending invitation' }
       : { cls: 'bg-green-100 text-green-700', label: 'Active' };
+
+  const handleDelete = async () => {
+    if (
+      !window.confirm(
+        `Delete ${data.email}? This drops all of their devices and readings.`,
+      )
+    )
+      return;
+    try {
+      await del.mutateAsync(userId);
+      navigate('/admin/users');
+    } catch (e) {
+      alert((e as Error).message || 'Unable to delete.');
+    }
+  };
 
   return (
     <div>
@@ -76,6 +114,53 @@ export function AdminUserDetail() {
               : 'Never'}
           </dd>
         </dl>
+
+        <div className="mt-4 pt-4 border-t flex flex-wrap gap-2">
+          {data.has_password ? (
+            <button
+              type="button"
+              onClick={() => setResetOpen(true)}
+              className={secondaryBtn}
+            >
+              Send password reset link
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setResendOpen(true)}
+              className={secondaryBtn}
+            >
+              Resend invitation
+            </button>
+          )}
+          {!isMe && data.is_active && (
+            <button
+              type="button"
+              onClick={() => deactivate.mutate(userId)}
+              className={secondaryBtn}
+            >
+              Deactivate
+            </button>
+          )}
+          {!data.is_active && (
+            <button
+              type="button"
+              onClick={() => reactivate.mutate(userId)}
+              className={secondaryBtn}
+            >
+              Reactivate
+            </button>
+          )}
+          {!isMe && (
+            <button
+              type="button"
+              onClick={handleDelete}
+              className={destructiveBtn}
+            >
+              Delete user
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center justify-between mb-3">
@@ -111,15 +196,12 @@ export function AdminUserDetail() {
               {data.devices.map((d) => {
                 const online = isOnline(d);
                 return (
-                  <tr key={d.id} className="border-t">
-                    <td className="px-4 py-2 font-mono">
-                      <Link
-                        to={`/admin/devices/${d.id}`}
-                        className="text-blue-600 hover:underline"
-                      >
-                        {d.device_key}
-                      </Link>
-                    </td>
+                  <tr
+                    key={d.id}
+                    onClick={() => navigate(`/admin/devices/${d.id}`)}
+                    className="border-t hover:bg-gray-50 cursor-pointer"
+                  >
+                    <td className="px-4 py-2 font-mono">{d.device_key}</td>
                     <td className="px-4 py-2">{d.name}</td>
                     <td className="px-4 py-2 text-gray-600">
                       {d.location || '—'}
@@ -156,28 +238,16 @@ export function AdminUserDetail() {
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <details className="relative inline-block">
-                        <summary className="cursor-pointer list-none text-gray-500 hover:text-gray-900 px-2 select-none">
-                          ⋯
-                        </summary>
-                        <div className="absolute right-0 mt-1 bg-white shadow-md border rounded text-sm w-56 z-10">
-                          <Link
-                            to={`/admin/devices/${d.id}`}
-                            className="block px-3 py-2 hover:bg-gray-50"
-                          >
-                            View
-                          </Link>
-                          <button
-                            type="button"
-                            onClick={() => setRotateForDeviceId(d.id)}
-                            className="block w-full text-left px-3 py-2 hover:bg-gray-50"
-                          >
-                            {d.mqtt_provisioned
-                              ? 'Rotate MQTT password'
-                              : 'Generate MQTT password'}
-                          </button>
-                        </div>
-                      </details>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRotateForDeviceId(d.id);
+                        }}
+                        className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700"
+                      >
+                        {d.mqtt_provisioned ? 'Rotate MQTT' : 'Generate MQTT'}
+                      </button>
                     </td>
                   </tr>
                 );
@@ -191,6 +261,16 @@ export function AdminUserDetail() {
         open={showAddDevice}
         onClose={() => setShowAddDevice(false)}
         userId={userId}
+      />
+      <ResetLinkModal
+        userId={userId}
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+      />
+      <ResendInvitationModal
+        userId={userId}
+        open={resendOpen}
+        onClose={() => setResendOpen(false)}
       />
       {rotateForDeviceId !== null && (
         <MqttCredentialsModal

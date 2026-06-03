@@ -44,6 +44,7 @@ from ..schemas import (
     CreateUserOut,
     DeviceAdminOut,
     DeviceForUserOut,
+    InvitationLinkOut,
     OwnerOut,
     PatchDeviceIn,
     ResetLinkOut,
@@ -231,6 +232,44 @@ async def get_user(
         device_count=len(devices),
         devices=[_device_for_user_out(d) for d in devices],
     )
+
+
+@router.post("/users/{user_id}/resend-invitation", response_model=InvitationLinkOut)
+async def resend_invitation(
+    user_id: int, db: AsyncSession = Depends(get_db)
+) -> InvitationLinkOut:
+    """Re-issue an invitation token for a user who hasn't accepted yet.
+
+    Generates a new token; previously-issued ones aren't explicitly
+    invalidated, but the user only needs one valid token to set their
+    password. 400 if the user already has a password set — use the reset
+    flow instead.
+    """
+    settings = get_settings()
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    if user.password_hash is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "user already has a password; use the reset-link flow",
+        )
+
+    raw, token_hash_value = generate_token()
+    db.add(
+        AuthToken(
+            user_id=user.id,
+            kind="invitation",
+            token_hash=token_hash_value,
+            expires_at=datetime.now(UTC) + INVITATION_TOKEN_TTL,
+        )
+    )
+    await db.commit()
+    invitation_url = (
+        f"{settings.FRONTEND_ORIGIN}/set-password?token={raw}&mode=invitation"
+    )
+    log.info("admin re-issued invitation for user id=%s", user.id)
+    return InvitationLinkOut(invitation_url=invitation_url)
 
 
 @router.post("/users/{user_id}/reset-link", response_model=ResetLinkOut)

@@ -8,6 +8,7 @@ import type {
   DevicePatch,
   DeviceStatus,
   DeviceWithLatestReading,
+  InvitationLinkResponse,
   Reading,
   ResetLinkResponse,
   RotateMqttResponse,
@@ -169,6 +170,16 @@ export function useSendResetLink() {
   return useMutation({
     mutationFn: (id: number) =>
       postJson<ResetLinkResponse>(`/admin/users/${id}/reset-link`, {}),
+  });
+}
+
+export function useResendInvitation() {
+  return useMutation({
+    mutationFn: (id: number) =>
+      postJson<InvitationLinkResponse>(
+        `/admin/users/${id}/resend-invitation`,
+        {},
+      ),
   });
 }
 

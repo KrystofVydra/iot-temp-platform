@@ -83,6 +83,10 @@ export type ResetLinkResponse = {
   reset_url: string;
 };
 
+export type InvitationLinkResponse = {
+  invitation_url: string;
+};
+
 export type CreateDeviceResponse = {
   device: DeviceAdmin;
   mqtt_password: string;

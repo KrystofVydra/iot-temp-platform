@@ -1,15 +1,8 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { useAuth } from '../../components/AuthGate';
 import { AddUserModal } from '../../components/admin/AddUserModal';
-import { ResetLinkModal } from '../../components/admin/ResetLinkModal';
-import {
-  useAdminUsers,
-  useDeactivateUser,
-  useDeleteUser,
-  useReactivateUser,
-} from '../../lib/hooks';
+import { useAdminUsers } from '../../lib/hooks';
 import type { UserAdmin } from '../../lib/types';
 
 type Status = 'active' | 'deactivated' | 'pending';
@@ -35,24 +28,9 @@ function StatusPill({ status }: { status: Status }) {
 }
 
 export function AdminUsers() {
-  const { user: currentUser } = useAuth();
+  const navigate = useNavigate();
   const { data: users, isLoading, error } = useAdminUsers();
   const [showAdd, setShowAdd] = useState(false);
-  const [resetForUserId, setResetForUserId] = useState<number | null>(null);
-
-  const deactivate = useDeactivateUser();
-  const reactivate = useReactivateUser();
-  const del = useDeleteUser();
-
-  const handleDelete = (u: UserAdmin) => {
-    if (
-      !window.confirm(
-        `Delete ${u.email}? This drops all of their devices and readings.`,
-      )
-    )
-      return;
-    del.mutate(u.id);
-  };
 
   return (
     <div>
@@ -89,22 +67,19 @@ export function AdminUsers() {
                 <th className="px-4 py-2">Last Login</th>
                 <th className="px-4 py-2">Created</th>
                 <th className="px-4 py-2">Devices</th>
-                <th className="px-4 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => {
-                const isMe = currentUser?.id === u.id;
                 const status = statusOf(u);
                 return (
-                  <tr key={u.id} className="border-t">
+                  <tr
+                    key={u.id}
+                    onClick={() => navigate(`/admin/users/${u.id}`)}
+                    className="border-t hover:bg-gray-50 cursor-pointer"
+                  >
                     <td className="px-4 py-2">
-                      <Link
-                        to={`/admin/users/${u.id}`}
-                        className="text-blue-600 hover:underline"
-                      >
-                        {u.email}
-                      </Link>
+                      {u.email}
                       {u.is_admin && (
                         <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
                           admin
@@ -130,57 +105,6 @@ export function AdminUsers() {
                     <td className="px-4 py-2 text-gray-600">
                       {u.device_count}
                     </td>
-                    <td className="px-4 py-2 text-right">
-                      <details className="relative inline-block">
-                        <summary className="cursor-pointer list-none text-gray-500 hover:text-gray-900 px-2 select-none">
-                          ⋯
-                        </summary>
-                        <div className="absolute right-0 mt-1 bg-white shadow-md border rounded text-sm w-48 z-10">
-                          <Link
-                            to={`/admin/users/${u.id}`}
-                            className="block px-3 py-2 hover:bg-gray-50"
-                          >
-                            View
-                          </Link>
-                          {u.has_password && (
-                            <button
-                              type="button"
-                              onClick={() => setResetForUserId(u.id)}
-                              className="block w-full text-left px-3 py-2 hover:bg-gray-50"
-                            >
-                              Send reset link
-                            </button>
-                          )}
-                          {!isMe && u.is_active && (
-                            <button
-                              type="button"
-                              onClick={() => deactivate.mutate(u.id)}
-                              className="block w-full text-left px-3 py-2 hover:bg-gray-50"
-                            >
-                              Deactivate
-                            </button>
-                          )}
-                          {!u.is_active && (
-                            <button
-                              type="button"
-                              onClick={() => reactivate.mutate(u.id)}
-                              className="block w-full text-left px-3 py-2 hover:bg-gray-50"
-                            >
-                              Reactivate
-                            </button>
-                          )}
-                          {!isMe && (
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(u)}
-                              className="block w-full text-left px-3 py-2 hover:bg-gray-50 text-red-600"
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      </details>
-                    </td>
                   </tr>
                 );
               })}
@@ -190,13 +114,6 @@ export function AdminUsers() {
       )}
 
       <AddUserModal open={showAdd} onClose={() => setShowAdd(false)} />
-      {resetForUserId !== null && (
-        <ResetLinkModal
-          userId={resetForUserId}
-          open={true}
-          onClose={() => setResetForUserId(null)}
-        />
-      )}
     </div>
   );
 }

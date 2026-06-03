@@ -148,6 +148,25 @@ export function AdminDeviceDetail() {
               : 'Never'}
           </dd>
         </dl>
+
+        <div className="mt-4 pt-4 border-t flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setRotateOpen(true)}
+            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded text-gray-700"
+          >
+            {device.mqtt_provisioned
+              ? 'Rotate MQTT password'
+              : 'Generate MQTT password'}
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="px-3 py-1 text-sm bg-red-50 hover:bg-red-100 rounded text-red-700"
+          >
+            Delete device
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
@@ -216,28 +235,6 @@ export function AdminDeviceDetail() {
             </button>
           </div>
         </form>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-        <h2 className="font-semibold mb-3">Actions</h2>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setRotateOpen(true)}
-            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
-          >
-            {device.mqtt_provisioned
-              ? 'Rotate MQTT password'
-              : 'Generate MQTT password'}
-          </button>
-          <button
-            type="button"
-            onClick={handleDelete}
-            className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 text-white rounded"
-          >
-            Delete device
-          </button>
-        </div>
       </div>
 
       {chartUnavailable ? (
