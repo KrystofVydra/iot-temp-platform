@@ -1,25 +1,28 @@
 #!/bin/sh
 # Provision a new device user in Mosquitto.
 #
-# Generates a random 24-character password, adds the user to the password
-# file, appends an ACL block restricting the user to its own topic prefix
-# (devices/<device_key>/#), and reloads Mosquitto via SIGHUP. Idempotent:
-# aborts if the device_key already exists.
+# If a password is supplied as the second argument, it is used verbatim.
+# Otherwise a random 24-character password is generated. Either way the
+# user is added to the password file, an ACL block restricting it to its
+# own topic prefix (devices/<device_key>/#) is appended, and Mosquitto is
+# reloaded via SIGHUP. Idempotent: aborts if the device_key already exists.
 #
 # Usage:
 #   docker exec -it mosquitto sh /mosquitto/config/scripts/add_device.sh esp32-kitchen-01
+#   docker exec -it mosquitto sh /mosquitto/config/scripts/add_device.sh esp32-kitchen-01 <password>
 
 set -eu
 
 PASSWORD_FILE="/mosquitto/data/passwords"
 ACL_FILE="/mosquitto/data/acl"
 
-if [ "$#" -ne 1 ] || [ -z "${1:-}" ]; then
-    echo "Usage: $0 <device_key>" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ] || [ -z "${1:-}" ]; then
+    echo "Usage: $0 <device_key> [password]" >&2
     exit 1
 fi
 
 DEVICE_KEY="$1"
+PASSWORD="${2:-}"
 
 if [ ! -f "$PASSWORD_FILE" ]; then
     echo "Error: $PASSWORD_FILE does not exist. Run init_admin.sh first." >&2
@@ -32,8 +35,10 @@ if grep -q "^${DEVICE_KEY}:" "$PASSWORD_FILE"; then
     exit 1
 fi
 
-# 24 alphanumeric characters from /dev/urandom. tr + head are in BusyBox.
-PASSWORD="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24)"
+if [ -z "$PASSWORD" ]; then
+    # 24 alphanumeric characters from /dev/urandom. tr + head are in BusyBox.
+    PASSWORD="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24)"
+fi
 
 mosquitto_passwd -b "$PASSWORD_FILE" "$DEVICE_KEY" "$PASSWORD"
 chown root:root "$PASSWORD_FILE" && chmod 0700 "$PASSWORD_FILE"
