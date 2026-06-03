@@ -1,4 +1,10 @@
-"""Device + reading endpoints. All routes require a valid bearer token."""
+"""Device + reading endpoints, scoped to the current user.
+
+Every endpoint resolves the caller via the session cookie (``get_current_user``)
+and refuses to return devices belonging to anyone else. A 404 is returned
+for "device id exists but isn't yours" as well as "device id doesn't exist"
+so callers can't enumerate other users' device ids.
+"""
 
 from __future__ import annotations
 
@@ -9,46 +15,49 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import require_api_token
+from ..auth import get_current_user
 from ..db import get_db
-from ..models import Device, Reading
+from ..models import Device, Reading, User
 from ..schemas import DeviceOut, DeviceWithLatestReading, ReadingOut, reading_to_out
 
-router = APIRouter(
-    prefix="/devices",
-    tags=["devices"],
-    dependencies=[Depends(require_api_token)],
-)
+router = APIRouter(prefix="/devices", tags=["devices"])
 
 _BUCKET_PATTERN = re.compile(r"^(\d+)([smhd])$")
 _BUCKET_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 
-async def _get_device_or_404(session: AsyncSession, device_id: int) -> Device:
-    device = await session.get(Device, device_id)
+async def _get_device_or_404(
+    db: AsyncSession, device_id: int, user_id: int
+) -> Device:
+    """Return the device only if it exists AND is owned by user_id."""
+    stmt = select(Device).where(Device.id == device_id, Device.user_id == user_id)
+    device = (await db.execute(stmt)).scalar_one_or_none()
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="device not found")
     return device
 
 
-async def _latest_reading(session: AsyncSession, device_id: int) -> Reading | None:
+async def _latest_reading(db: AsyncSession, device_id: int) -> Reading | None:
     stmt = (
         select(Reading)
         .where(Reading.device_id == device_id)
         .order_by(Reading.time.desc())
         .limit(1)
     )
-    return (await session.execute(stmt)).scalar_one_or_none()
+    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 @router.get("", response_model=list[DeviceWithLatestReading])
 async def list_devices(
-    session: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> list[DeviceWithLatestReading]:
-    devices = (await session.execute(select(Device).order_by(Device.id))).scalars().all()
+    devices = (
+        await db.execute(select(Device).where(Device.user_id == user.id).order_by(Device.id))
+    ).scalars().all()
     out: list[DeviceWithLatestReading] = []
     for device in devices:
-        latest = await _latest_reading(session, device.id)
+        latest = await _latest_reading(db, device.id)
         out.append(
             DeviceWithLatestReading(
                 device=DeviceOut.model_validate(device),
@@ -59,8 +68,12 @@ async def list_devices(
 
 
 @router.get("/{device_id}", response_model=DeviceOut)
-async def get_device(device_id: int, session: AsyncSession = Depends(get_db)) -> DeviceOut:
-    device = await _get_device_or_404(session, device_id)
+async def get_device(
+    device_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DeviceOut:
+    device = await _get_device_or_404(db, device_id, user.id)
     return DeviceOut.model_validate(device)
 
 
@@ -70,10 +83,12 @@ async def get_device(device_id: int, session: AsyncSession = Depends(get_db)) ->
     responses={204: {"description": "device has no readings yet"}},
 )
 async def get_latest_reading(
-    device_id: int, session: AsyncSession = Depends(get_db)
+    device_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ReadingOut | Response:
-    await _get_device_or_404(session, device_id)
-    latest = await _latest_reading(session, device_id)
+    await _get_device_or_404(db, device_id, user.id)
+    latest = await _latest_reading(db, device_id)
     if latest is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     return reading_to_out(latest)
@@ -86,12 +101,13 @@ async def get_device_readings(
     to: datetime = Query(...),
     bucket: str | None = Query(default=None),
     limit: int = Query(default=1000, ge=1, le=10000),
-    session: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> list[ReadingOut]:
     if to <= from_:
         raise HTTPException(status_code=400, detail="`to` must be greater than `from`")
 
-    await _get_device_or_404(session, device_id)
+    await _get_device_or_404(db, device_id, user.id)
 
     if bucket is None:
         stmt = (
@@ -104,7 +120,7 @@ async def get_device_readings(
             .order_by(Reading.time.asc())
             .limit(limit)
         )
-        rows = (await session.execute(stmt)).scalars().all()
+        rows = (await db.execute(stmt)).scalars().all()
         return [reading_to_out(r) for r in rows]
 
     match = _BUCKET_PATTERN.fullmatch(bucket)
@@ -116,10 +132,10 @@ async def get_device_readings(
     n, unit = match.group(1), match.group(2)
     interval_str = f"{n} {_BUCKET_UNITS[unit]}"
 
-    # interval_str is already validated by the regex above and mapped through
-    # _BUCKET_UNITS, so it's safe to interpolate as a SQL literal. Binding it
-    # as :bucket doesn't work because SQLAlchemy's parser mis-handles the
-    # adjacent `::interval` cast (sees `:bucket::interval` as one token).
+    # interval_str is already regex-validated above and mapped through
+    # _BUCKET_UNITS, so it's safe to f-string into the SQL. Binding it as
+    # :bucket doesn't work because SQLAlchemy's parser mis-handles the
+    # adjacent `::interval` cast.
     sql = text(
         f"""
         SELECT time_bucket('{interval_str}'::interval, time) AS bucket_time,
@@ -134,7 +150,7 @@ async def get_device_readings(
         LIMIT :limit
         """
     )
-    result = await session.execute(
+    result = await db.execute(
         sql,
         {
             "device_id": device_id,

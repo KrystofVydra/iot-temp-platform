@@ -13,6 +13,7 @@ from datetime import datetime
 from sqlalchemy import (
     REAL,
     BigInteger,
+    Boolean,
     ForeignKey,
     Index,
     Integer,
@@ -31,6 +32,21 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     email: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    # Kept in sync with backend/app/models.py for schema-consistency. The
+    # ingestor does not read or write these fields directly.
+    password_hash: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    display_name: Mapped[str] = mapped_column(
+        String(255), nullable=False, server_default="User"
+    )
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,

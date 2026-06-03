@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import devices, health
+from .routers import auth, devices, health
 
 settings = get_settings()
 logging.basicConfig(
@@ -33,6 +33,7 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(devices.router)
     return app
 
