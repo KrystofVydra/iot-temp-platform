@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { AddUserModal } from '../../components/admin/AddUserModal';
 import { useAdminUsers } from '../../lib/hooks';
@@ -79,7 +79,13 @@ export function AdminUsers() {
                     className="border-t hover:bg-gray-50 cursor-pointer"
                   >
                     <td className="px-4 py-2">
-                      {u.email}
+                      <Link
+                        to={`/admin/users/${u.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                      >
+                        {u.email}
+                      </Link>
                       {u.is_admin && (
                         <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
                           admin

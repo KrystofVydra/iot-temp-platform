@@ -201,7 +201,15 @@ export function AdminUserDetail() {
                     onClick={() => navigate(`/admin/devices/${d.id}`)}
                     className="border-t hover:bg-gray-50 cursor-pointer"
                   >
-                    <td className="px-4 py-2 font-mono">{d.device_key}</td>
+                    <td className="px-4 py-2 font-mono">
+                      <Link
+                        to={`/admin/devices/${d.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                      >
+                        {d.device_key}
+                      </Link>
+                    </td>
                     <td className="px-4 py-2">{d.name}</td>
                     <td className="px-4 py-2 text-gray-600">
                       {d.location || '—'}
