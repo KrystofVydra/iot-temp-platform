@@ -75,6 +75,11 @@ class Device(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    # Admin bookkeeping: True once the admin has registered this device's MQTT
+    # credential with Mosquitto. The actual password is not stored anywhere.
+    mqtt_provisioned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
 
 class Reading(Base):

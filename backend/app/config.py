@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # bcrypt cost factor. 12 is the modern default; ~250ms per hash on a
     # mid-grade CPU.
     BCRYPT_ROUNDS: int = 12
+    # Coolify resource label used to locate the running Mosquitto container
+    # from inside the SSH command admins paste on the VPS to provision
+    # device credentials. Override in env if the resource is renamed.
+    MOSQUITTO_RESOURCE_NAME: str = "iot-mosquitto"
 
     @property
     def cors_origins_list(self) -> list[str]:
