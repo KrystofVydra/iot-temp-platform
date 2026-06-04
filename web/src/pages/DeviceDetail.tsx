@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { DeviceChart } from '../components/DeviceChart';
-import { useDevice, useLatestReading, useReadings } from '../lib/hooks';
+import { useDevice, useLatestReading } from '../lib/hooks';
 import type { TimeRange } from '../lib/types';
 
 export function DeviceDetail() {
@@ -12,18 +12,11 @@ export function DeviceDetail() {
 
   const device = useDevice(deviceId);
   const latest = useLatestReading(deviceId);
-  const readings = useReadings(deviceId, range);
 
   if (device.isLoading) return <div>Loading…</div>;
   if (device.error)
     return <div className="text-red-600">Error: {(device.error as Error).message}</div>;
   if (!device.data) return <div>Not found.</div>;
-
-  const chartData =
-    readings.data?.map((r) => ({
-      time: new Date(r.time).getTime(),
-      temperature: r.temperature,
-    })) ?? [];
 
   return (
     <div>
@@ -46,7 +39,7 @@ export function DeviceDetail() {
         </div>
       )}
 
-      <DeviceChart range={range} setRange={setRange} data={chartData} />
+      <DeviceChart deviceId={deviceId} range={range} setRange={setRange} />
     </div>
   );
 }

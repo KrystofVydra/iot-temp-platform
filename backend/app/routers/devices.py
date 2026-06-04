@@ -104,10 +104,25 @@ async def get_device_readings(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ReadingOut]:
+    await _get_device_or_404(db, device_id, user.id)
+    return await _fetch_readings(db, device_id, from_, to, bucket, limit)
+
+
+async def _fetch_readings(
+    db: AsyncSession,
+    device_id: int,
+    from_: datetime,
+    to: datetime,
+    bucket: str | None,
+    limit: int,
+) -> list[ReadingOut]:
+    """Shared readings fetch used by both /devices and /admin/devices routers.
+
+    Does NOT check ownership — the caller does. Encapsulates the from/to
+    range check, raw vs bucketed branch, and the time_bucket SQL.
+    """
     if to <= from_:
         raise HTTPException(status_code=400, detail="`to` must be greater than `from`")
-
-    await _get_device_or_404(db, device_id, user.id)
 
     if bucket is None:
         stmt = (

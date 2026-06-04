@@ -8,17 +8,33 @@ import {
   YAxis,
 } from 'recharts';
 import { format } from 'date-fns';
+import { useAdminReadings, useReadings } from '../lib/hooks';
 import type { TimeRange } from '../lib/types';
 
 const RANGES: TimeRange[] = ['1h', '6h', '24h', '7d', '30d'];
 
+export type DeviceChartMode = 'self' | 'admin';
+
 type Props = {
+  deviceId: number;
   range: TimeRange;
   setRange: (r: TimeRange) => void;
-  data: { time: number; temperature: number }[];
+  mode?: DeviceChartMode;
 };
 
-export function DeviceChart({ range, setRange, data }: Props) {
+export function DeviceChart({ deviceId, range, setRange, mode = 'self' }: Props) {
+  // Both hooks register so React's rules-of-hooks holds across renders, but
+  // only the one matching `mode` is enabled — the other stays in idle state.
+  const selfQuery = useReadings(deviceId, range, mode === 'self');
+  const adminQuery = useAdminReadings(deviceId, range, mode === 'admin');
+  const readings = mode === 'admin' ? adminQuery : selfQuery;
+
+  const data =
+    readings.data?.map((r) => ({
+      time: new Date(r.time).getTime(),
+      temperature: r.temperature,
+    })) ?? [];
+
   const wideRange = range === '7d' || range === '30d';
 
   return (

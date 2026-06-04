@@ -3,12 +3,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { DeviceChart } from '../../components/DeviceChart';
 import { MqttCredentialsModal } from '../../components/admin/MqttCredentialsModal';
-import { ApiError } from '../../lib/api';
 import {
   useAdminDevice,
+  useAdminLatestReading,
   useAdminUsers,
   useDeleteDevice,
-  useReadings,
   useUpdateDevice,
 } from '../../lib/hooks';
 import type { TimeRange } from '../../lib/types';
@@ -31,7 +30,7 @@ export function AdminDeviceDetail() {
   const [saved, setSaved] = useState(false);
 
   const [range, setRange] = useState<TimeRange>('24h');
-  const readings = useReadings(deviceId, range);
+  const latest = useAdminLatestReading(deviceId);
 
   useEffect(() => {
     if (device) {
@@ -88,17 +87,6 @@ export function AdminDeviceDetail() {
       alert((e as Error).message || 'Unable to delete.');
     }
   };
-
-  const chartData =
-    readings.data?.map((r) => ({
-      time: new Date(r.time).getTime(),
-      temperature: r.temperature,
-    })) ?? [];
-
-  // The readings endpoint is owner-scoped, so admins viewing someone else's
-  // device get a 404. Show a friendly note instead of the chart in that case.
-  const chartUnavailable =
-    readings.error instanceof ApiError && readings.error.status === 404;
 
   return (
     <div>
@@ -237,14 +225,27 @@ export function AdminDeviceDetail() {
         </form>
       </div>
 
-      {chartUnavailable ? (
-        <div className="bg-white rounded-lg shadow-sm p-4 text-sm text-gray-500">
-          Chart unavailable — the readings API is scoped to the device&rsquo;s
-          owner.
+      {latest.data && (
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+          <div className="text-5xl font-light mb-2">
+            {latest.data.temperature.toFixed(2)}°C
+          </div>
+          <div className="text-sm text-gray-500">
+            Lux: {latest.data.lux} · Battery:{' '}
+            {latest.data.battery_v !== null
+              ? `${latest.data.battery_v.toFixed(2)}V`
+              : '–'}{' '}
+            · Updated {format(new Date(latest.data.time), 'PPpp')}
+          </div>
         </div>
-      ) : (
-        <DeviceChart range={range} setRange={setRange} data={chartData} />
       )}
+
+      <DeviceChart
+        deviceId={deviceId}
+        mode="admin"
+        range={range}
+        setRange={setRange}
+      />
 
       {rotateOpen && (
         <MqttCredentialsModal

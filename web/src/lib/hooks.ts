@@ -49,7 +49,11 @@ export function useLatestReading(deviceId: number) {
   });
 }
 
-export function useReadings(deviceId: number, range: TimeRange) {
+export function useReadings(
+  deviceId: number,
+  range: TimeRange,
+  enabled: boolean = true,
+) {
   return useQuery({
     queryKey: ['devices', deviceId, 'readings', range],
     queryFn: () => {
@@ -58,6 +62,7 @@ export function useReadings(deviceId: number, range: TimeRange) {
       return apiFetch<Reading[]>(`/devices/${deviceId}/readings?${params}`);
     },
     refetchInterval: 60_000,
+    enabled,
   });
 }
 
@@ -116,6 +121,44 @@ export function useAdminDevice(id: number) {
   return useQuery({
     queryKey: ['admin', 'devices', id],
     queryFn: () => apiFetch<DeviceAdmin>(`/admin/devices/${id}`),
+  });
+}
+
+export function useAdminLatestReading(deviceId: number) {
+  return useQuery({
+    queryKey: ['admin', 'devices', deviceId, 'latest'],
+    queryFn: async (): Promise<Reading | null> => {
+      try {
+        const r = await apiFetch<Reading | undefined>(
+          `/admin/devices/${deviceId}/readings/latest`,
+        );
+        // apiFetch returns undefined on 204 (no readings yet).
+        return r ?? null;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 204) return null;
+        throw e;
+      }
+    },
+    refetchInterval: 30_000,
+  });
+}
+
+export function useAdminReadings(
+  deviceId: number,
+  range: TimeRange,
+  enabled: boolean = true,
+) {
+  return useQuery({
+    queryKey: ['admin', 'devices', deviceId, 'readings', range],
+    queryFn: () => {
+      const { from, to, bucket } = computeRangeParams(range);
+      const params = new URLSearchParams({ from, to, bucket });
+      return apiFetch<Reading[]>(
+        `/admin/devices/${deviceId}/readings?${params}`,
+      );
+    },
+    refetchInterval: 60_000,
+    enabled,
   });
 }
 

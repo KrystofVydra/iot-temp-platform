@@ -47,11 +47,14 @@ from ..schemas import (
     InvitationLinkOut,
     OwnerOut,
     PatchDeviceIn,
+    ReadingOut,
     ResetLinkOut,
     RotateMqttOut,
     UserAdminDetailOut,
     UserAdminOut,
+    reading_to_out,
 )
+from .devices import _fetch_readings, _latest_reading
 
 log = logging.getLogger("admin")
 
@@ -516,6 +519,44 @@ async def rotate_mqtt_password(
         device.device_key,
     )
     return RotateMqttOut(mqtt_password=password, ssh_command=ssh_command)
+
+
+async def _admin_device_or_404(db: AsyncSession, device_id: int) -> Device:
+    """Existence check without ownership filter — for admin-only readings paths."""
+    device = await db.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+    return device
+
+
+@router.get(
+    "/devices/{device_id}/readings/latest",
+    response_model=ReadingOut,
+    responses={204: {"description": "device has no readings yet"}},
+)
+async def admin_get_latest_reading(
+    device_id: int, db: AsyncSession = Depends(get_db)
+) -> ReadingOut | Response:
+    await _admin_device_or_404(db, device_id)
+    latest = await _latest_reading(db, device_id)
+    if latest is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return reading_to_out(latest)
+
+
+@router.get(
+    "/devices/{device_id}/readings", response_model=list[ReadingOut]
+)
+async def admin_get_device_readings(
+    device_id: int,
+    from_: datetime = Query(..., alias="from"),
+    to: datetime = Query(...),
+    bucket: str | None = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=10000),
+    db: AsyncSession = Depends(get_db),
+) -> list[ReadingOut]:
+    await _admin_device_or_404(db, device_id)
+    return await _fetch_readings(db, device_id, from_, to, bucket, limit)
 
 
 @router.delete("/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
