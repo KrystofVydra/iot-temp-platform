@@ -77,15 +77,39 @@ def constant_time_dummy_password_check() -> None:
     bcrypt.checkpw(b"dummy", _DUMMY_BCRYPT_HASH)
 
 
+def extract_raw_session_token(request: Request) -> str | None:
+    """Pull the raw session token off the request, either source.
+
+    Priority:
+      1. ``Authorization: Bearer <token>`` header (mobile / API clients).
+      2. ``session_token`` cookie (web).
+
+    A non-Bearer Authorization (``Banana xyz``, empty Bearer, etc.) is not
+    treated as an error — we fall through to the cookie. That keeps the
+    behavior friendly when clients send unrelated Authorization headers
+    while still letting the web cookie path succeed.
+    """
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        candidate = auth_header.removeprefix("Bearer ").strip()
+        if candidate:
+            return candidate
+    return request.cookies.get(SESSION_COOKIE_NAME)
+
+
 async def get_current_user(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> User:
-    """Resolve the current ``User`` from the ``session_token`` cookie.
+    """Resolve the current ``User`` from the session token.
+
+    The token can arrive on either the ``session_token`` cookie (web) or
+    the ``Authorization: Bearer <token>`` header (mobile / API clients) —
+    see ``extract_raw_session_token``.
 
     Raises 401 on missing/invalid/expired session or disabled user. Touches
     ``last_used_at`` on success so we can later expire idle sessions.
     """
-    raw = request.cookies.get(SESSION_COOKIE_NAME)
+    raw = extract_raw_session_token(request)
     if not raw:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not authenticated")
 

@@ -21,6 +21,7 @@ from ..auth import (
     SESSION_COOKIE_NAME,
     SESSION_TTL,
     constant_time_dummy_password_check,
+    extract_raw_session_token,
     generate_token,
     get_current_user,
     hash_password,
@@ -57,6 +58,15 @@ class UserOut(BaseModel):
     email: str
     display_name: str
     is_admin: bool
+
+
+class LoginOut(UserOut):
+    """Login response. ``token`` is populated only when the request carries
+    ``X-Client: mobile`` — mobile clients need the raw value, the web's
+    cookie path already has it.
+    """
+
+    token: str | None = None
 
 
 class ForgotPasswordIn(BaseModel):
@@ -130,13 +140,13 @@ def _user_out(user: User) -> UserOut:
 # --- endpoints ------------------------------------------------------------
 
 
-@router.post("/login", response_model=UserOut)
+@router.post("/login", response_model=LoginOut)
 async def login(
     payload: LoginIn,
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
-) -> UserOut:
+) -> LoginOut:
     email = payload.email.strip().lower()
     user = (
         await db.execute(select(User).where(User.email == email))
@@ -156,8 +166,17 @@ async def login(
         update(User).where(User.id == user.id).values(last_login_at=datetime.now(UTC))
     )
     await db.commit()
+    # Cookie is set unconditionally — mobile clients ignore it, web needs it.
     _set_session_cookie(response, raw)
-    return _user_out(user)
+
+    is_mobile = request.headers.get("X-Client", "").lower() == "mobile"
+    return LoginOut(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        is_admin=user.is_admin,
+        token=raw if is_mobile else None,
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -167,12 +186,16 @@ async def logout(
     user: User = Depends(get_current_user),  # noqa: ARG001  enforces auth
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    raw = request.cookies.get(SESSION_COOKIE_NAME)
+    # Resolve the raw token from whichever carrier was used (header or
+    # cookie) so the matching sessions row gets deleted regardless of
+    # client type.
+    raw = extract_raw_session_token(request)
     if raw:
         await db.execute(
             delete(UserSession).where(UserSession.token_hash == hash_token(raw))
         )
         await db.commit()
+    # Harmless for mobile (they never sent a cookie); essential for web.
     _clear_session_cookie(response)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
