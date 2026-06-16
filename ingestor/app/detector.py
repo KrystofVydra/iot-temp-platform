@@ -144,27 +144,24 @@ async def find_active_notification(
     controller_id: int | None = None,
     node_id: int | None = None,
 ) -> Notification | None:
-    """Look up an unresolved notification matching the entity tuple."""
+    """Look up an unresolved notification matching the deepest scope entity provided.
+
+    Resolution order: node_id > controller_id > gateway_id. We match on the
+    deepest entity given; upper-level FKs are not constrained because
+    open_notification populates them for context but they're not part of
+    the notification's identity.
+    """
     stmt = select(Notification).where(
         Notification.user_id == user_id,
         Notification.kind == kind,
         Notification.resolved_at.is_(None),
     )
-    stmt = stmt.where(
-        Notification.gateway_id.is_(None)
-        if gateway_id is None
-        else Notification.gateway_id == gateway_id
-    )
-    stmt = stmt.where(
-        Notification.controller_id.is_(None)
-        if controller_id is None
-        else Notification.controller_id == controller_id
-    )
-    stmt = stmt.where(
-        Notification.node_id.is_(None)
-        if node_id is None
-        else Notification.node_id == node_id
-    )
+    if node_id is not None:
+        stmt = stmt.where(Notification.node_id == node_id)
+    elif controller_id is not None:
+        stmt = stmt.where(Notification.controller_id == controller_id)
+    elif gateway_id is not None:
+        stmt = stmt.where(Notification.gateway_id == gateway_id)
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
