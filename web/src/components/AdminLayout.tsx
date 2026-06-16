@@ -14,8 +14,8 @@ export function AdminLayout() {
         <NavLink to="/admin/users" className={tabClass}>
           Users
         </NavLink>
-        <NavLink to="/admin/devices" className={tabClass}>
-          Devices
+        <NavLink to="/admin/gateways" className={tabClass}>
+          Gateways
         </NavLink>
       </nav>
       <Outlet />

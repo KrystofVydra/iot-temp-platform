@@ -1,21 +1,21 @@
 import { useState } from 'react';
-import { useUpdateDevice } from '../../lib/hooks';
+import { useUpdateGateway } from '../../lib/hooks';
 import { CopyButton } from './CopyButton';
 
 type Props = {
-  deviceId: number;
+  gatewayId: number;
   password: string;
   sshCommand: string;
   onClose: () => void;
 };
 
 export function MqttCredentialsDisplay({
-  deviceId,
+  gatewayId,
   password,
   sshCommand,
   onClose,
 }: Props) {
-  const update = useUpdateDevice();
+  const update = useUpdateGateway();
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,7 +24,7 @@ export function MqttCredentialsDisplay({
     setError(null);
     try {
       await update.mutateAsync({
-        id: deviceId,
+        id: gatewayId,
         patch: { mqtt_provisioned: true },
       });
       onClose();
@@ -74,7 +74,7 @@ export function MqttCredentialsDisplay({
           disabled={marking}
           className="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded"
         >
-          {marking ? 'Saving…' : "I've provisioned this device"}
+          {marking ? 'Saving…' : "I've provisioned this gateway"}
         </button>
       </div>
     </div>

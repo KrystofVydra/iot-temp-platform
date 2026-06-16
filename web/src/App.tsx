@@ -4,14 +4,15 @@ import { AdminLayout } from './components/AdminLayout';
 import { AuthProvider, RequireAdmin, RequireAuth } from './components/AuthGate';
 import { Layout } from './components/Layout';
 import { ApiError } from './lib/api';
+import { ControllerDetail } from './pages/ControllerDetail';
 import { Dashboard } from './pages/Dashboard';
-import { DeviceDetail } from './pages/DeviceDetail';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { Login } from './pages/Login';
 import { NotFound } from './pages/NotFound';
 import { SetPassword } from './pages/SetPassword';
-import { AdminDeviceDetail } from './pages/admin/AdminDeviceDetail';
-import { AdminDevices } from './pages/admin/AdminDevices';
+import { AdminControllerDetail } from './pages/admin/AdminControllerDetail';
+import { AdminGatewayDetail } from './pages/admin/AdminGatewayDetail';
+import { AdminGateways } from './pages/admin/AdminGateways';
 import { AdminUserDetail } from './pages/admin/AdminUserDetail';
 import { AdminUsers } from './pages/admin/AdminUsers';
 
@@ -64,7 +65,7 @@ function App() {
               }
             >
               <Route path="/" element={<Dashboard />} />
-              <Route path="/devices/:id" element={<DeviceDetail />} />
+              <Route path="/controllers/:id" element={<ControllerDetail />} />
               <Route
                 path="/admin"
                 element={
@@ -76,8 +77,12 @@ function App() {
                 <Route index element={<Navigate to="/admin/users" replace />} />
                 <Route path="users" element={<AdminUsers />} />
                 <Route path="users/:id" element={<AdminUserDetail />} />
-                <Route path="devices" element={<AdminDevices />} />
-                <Route path="devices/:id" element={<AdminDeviceDetail />} />
+                <Route path="gateways" element={<AdminGateways />} />
+                <Route path="gateways/:id" element={<AdminGatewayDetail />} />
+                <Route
+                  path="controllers/:id"
+                  element={<AdminControllerDetail />}
+                />
               </Route>
             </Route>
             <Route path="*" element={<NotFound />} />

@@ -66,7 +66,7 @@ export function AdminUsers() {
                 <th className="px-4 py-2">Status</th>
                 <th className="px-4 py-2">Last Login</th>
                 <th className="px-4 py-2">Created</th>
-                <th className="px-4 py-2">Devices</th>
+                <th className="px-4 py-2">Gateways</th>
               </tr>
             </thead>
             <tbody>
@@ -109,7 +109,7 @@ export function AdminUsers() {
                       })}
                     </td>
                     <td className="px-4 py-2 text-gray-600">
-                      {u.device_count}
+                      {u.gateway_count}
                     </td>
                   </tr>
                 );

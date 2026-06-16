@@ -7,10 +7,10 @@ import { MqttCredentialsDisplay } from './MqttCredentialsDisplay';
 type Props = {
   open: boolean;
   onClose: () => void;
-  deviceId: number;
+  gatewayId: number;
 };
 
-export function MqttCredentialsModal({ open, onClose, deviceId }: Props) {
+export function MqttCredentialsModal({ open, onClose, gatewayId }: Props) {
   const [result, setResult] = useState<RotateMqttResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const rotate = useRotateMqttPassword();
@@ -20,13 +20,13 @@ export function MqttCredentialsModal({ open, onClose, deviceId }: Props) {
     setResult(null);
     setError(null);
     rotate
-      .mutateAsync(deviceId)
+      .mutateAsync(gatewayId)
       .then(setResult)
       .catch((e: unknown) =>
         setError((e as Error)?.message || 'Failed to rotate password.'),
       );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, deviceId]);
+  }, [open, gatewayId]);
 
   return (
     <Modal open={open} onClose={onClose} title="MQTT credentials">
@@ -45,7 +45,7 @@ export function MqttCredentialsModal({ open, onClose, deviceId }: Props) {
         </div>
       ) : result ? (
         <MqttCredentialsDisplay
-          deviceId={deviceId}
+          gatewayId={gatewayId}
           password={result.mqtt_password}
           sshCommand={result.ssh_command}
           onClose={onClose}

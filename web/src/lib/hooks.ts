@@ -1,91 +1,103 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ApiError, apiFetch, postJson } from './api';
+import { apiFetch, postJson } from './api';
 import type {
-  CreateDeviceResponse,
+  Controller,
+  ControllerDetail,
+  ControllerPatch,
+  CreateGatewayResponse,
   CreateUserResponse,
-  Device,
-  DeviceAdmin,
-  DevicePatch,
   DeviceStatus,
-  DeviceWithLatestReading,
+  GatewayAdmin,
+  GatewayDetailAdmin,
+  GatewayPatch,
   InvitationLinkResponse,
-  Reading,
+  NodePatch,
+  ReadingPoint,
   ResetLinkResponse,
   RotateMqttResponse,
+  TelemetryPoint,
   TimeRange,
   UserAdmin,
   UserAdminDetail,
 } from './types';
 
-export function useDevices() {
+// ===========================================================================
+// User-facing controller hooks
+// ===========================================================================
+
+export function useControllers() {
   return useQuery({
-    queryKey: ['devices'],
-    queryFn: () => apiFetch<DeviceWithLatestReading[]>('/devices'),
+    queryKey: ['controllers'],
+    queryFn: () => apiFetch<Controller[]>('/controllers'),
     refetchInterval: 30_000,
   });
 }
 
-export function useDevice(id: number) {
+export function useController(id: number) {
   return useQuery({
-    queryKey: ['devices', id],
-    queryFn: () => apiFetch<Device>(`/devices/${id}`),
-  });
-}
-
-export function useLatestReading(deviceId: number) {
-  return useQuery({
-    queryKey: ['devices', deviceId, 'latest'],
-    queryFn: async (): Promise<Reading | null> => {
-      try {
-        const r = await apiFetch<Reading | undefined>(`/devices/${deviceId}/readings/latest`);
-        // apiFetch returns undefined on 204 (device has no readings yet).
-        return r ?? null;
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 204) return null;
-        throw e;
-      }
-    },
+    queryKey: ['controllers', id],
+    queryFn: () => apiFetch<ControllerDetail>(`/controllers/${id}`),
     refetchInterval: 30_000,
   });
 }
 
-export function useReadings(
-  deviceId: number,
+export function useControllerReadings(
+  controllerId: number,
   range: TimeRange,
   enabled: boolean = true,
 ) {
   return useQuery({
-    queryKey: ['devices', deviceId, 'readings', range],
+    queryKey: ['controllers', controllerId, 'readings', range],
     queryFn: () => {
-      const { from, to, bucket } = computeRangeParams(range);
-      const params = new URLSearchParams({ from, to, bucket });
-      return apiFetch<Reading[]>(`/devices/${deviceId}/readings?${params}`);
+      const params = buildRangeParams(range);
+      return apiFetch<ReadingPoint[]>(
+        `/controllers/${controllerId}/readings?${params}`,
+      );
     },
     refetchInterval: 60_000,
     enabled,
   });
 }
 
-function computeRangeParams(range: TimeRange): { from: string; to: string; bucket: string } {
-  const now = new Date();
-  const to = now.toISOString();
-  const ranges: Record<TimeRange, { from: Date; bucket: string }> = {
-    '1h': { from: new Date(now.getTime() - 60 * 60 * 1000), bucket: '1m' },
-    '6h': { from: new Date(now.getTime() - 6 * 60 * 60 * 1000), bucket: '5m' },
-    '24h': { from: new Date(now.getTime() - 24 * 60 * 60 * 1000), bucket: '15m' },
-    '7d': { from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), bucket: '1h' },
-    '30d': { from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000), bucket: '6h' },
-  };
-  return {
-    from: ranges[range].from.toISOString(),
-    to,
-    bucket: ranges[range].bucket,
-  };
+export function useControllerTelemetry(
+  controllerId: number,
+  range: TimeRange,
+  enabled: boolean = true,
+) {
+  return useQuery({
+    queryKey: ['controllers', controllerId, 'telemetry', range],
+    queryFn: () => {
+      const params = buildRangeParams(range);
+      return apiFetch<TelemetryPoint[]>(
+        `/controllers/${controllerId}/telemetry?${params}`,
+      );
+    },
+    refetchInterval: 60_000,
+    enabled,
+  });
 }
 
-// =============================================================================
-// Admin hooks
-// =============================================================================
+// 1h, 6h → no bucket (raw points). 24h → 5m. 7d, 30d → 1h.
+function buildRangeParams(range: TimeRange): string {
+  const now = new Date();
+  const to = now.toISOString();
+  const spans: Record<TimeRange, { ms: number; bucket: string | null }> = {
+    '1h': { ms: 60 * 60 * 1000, bucket: null },
+    '6h': { ms: 6 * 60 * 60 * 1000, bucket: null },
+    '24h': { ms: 24 * 60 * 60 * 1000, bucket: '5m' },
+    '7d': { ms: 7 * 24 * 60 * 60 * 1000, bucket: '1h' },
+    '30d': { ms: 30 * 24 * 60 * 60 * 1000, bucket: '1h' },
+  };
+  const spec = spans[range];
+  const from = new Date(now.getTime() - spec.ms).toISOString();
+  const params = new URLSearchParams({ from, to });
+  if (spec.bucket) params.set('bucket', spec.bucket);
+  return params.toString();
+}
+
+// ===========================================================================
+// Admin: users
+// ===========================================================================
 
 export function useAdminUsers() {
   return useQuery({
@@ -98,67 +110,6 @@ export function useAdminUser(id: number) {
   return useQuery({
     queryKey: ['admin', 'users', id],
     queryFn: () => apiFetch<UserAdminDetail>(`/admin/users/${id}`),
-  });
-}
-
-export function useAdminDevices(filter: { q?: string; status?: DeviceStatus }) {
-  const params = new URLSearchParams();
-  if (filter.q) params.set('q', filter.q);
-  if (filter.status) params.set('status', filter.status);
-  const qs = params.toString();
-  return useQuery({
-    queryKey: [
-      'admin',
-      'devices',
-      { q: filter.q ?? '', status: filter.status ?? '' },
-    ],
-    queryFn: () =>
-      apiFetch<DeviceAdmin[]>(`/admin/devices${qs ? `?${qs}` : ''}`),
-  });
-}
-
-export function useAdminDevice(id: number) {
-  return useQuery({
-    queryKey: ['admin', 'devices', id],
-    queryFn: () => apiFetch<DeviceAdmin>(`/admin/devices/${id}`),
-  });
-}
-
-export function useAdminLatestReading(deviceId: number) {
-  return useQuery({
-    queryKey: ['admin', 'devices', deviceId, 'latest'],
-    queryFn: async (): Promise<Reading | null> => {
-      try {
-        const r = await apiFetch<Reading | undefined>(
-          `/admin/devices/${deviceId}/readings/latest`,
-        );
-        // apiFetch returns undefined on 204 (no readings yet).
-        return r ?? null;
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 204) return null;
-        throw e;
-      }
-    },
-    refetchInterval: 30_000,
-  });
-}
-
-export function useAdminReadings(
-  deviceId: number,
-  range: TimeRange,
-  enabled: boolean = true,
-) {
-  return useQuery({
-    queryKey: ['admin', 'devices', deviceId, 'readings', range],
-    queryFn: () => {
-      const { from, to, bucket } = computeRangeParams(range);
-      const params = new URLSearchParams({ from, to, bucket });
-      return apiFetch<Reading[]>(
-        `/admin/devices/${deviceId}/readings?${params}`,
-      );
-    },
-    refetchInterval: 60_000,
-    enabled,
   });
 }
 
@@ -204,7 +155,7 @@ export function useDeleteUser() {
       apiFetch<void>(`/admin/users/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
-      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
     },
   });
 }
@@ -226,7 +177,35 @@ export function useResendInvitation() {
   });
 }
 
-export function useCreateDevice() {
+// ===========================================================================
+// Admin: gateways
+// ===========================================================================
+
+export function useAdminGateways(filter: { q?: string; status?: DeviceStatus }) {
+  const params = new URLSearchParams();
+  if (filter.q) params.set('q', filter.q);
+  if (filter.status) params.set('status', filter.status);
+  const qs = params.toString();
+  return useQuery({
+    queryKey: [
+      'admin',
+      'gateways',
+      { q: filter.q ?? '', status: filter.status ?? '' },
+    ],
+    queryFn: () =>
+      apiFetch<GatewayAdmin[]>(`/admin/gateways${qs ? `?${qs}` : ''}`),
+  });
+}
+
+export function useAdminGateway(id: number) {
+  return useQuery({
+    queryKey: ['admin', 'gateways', id],
+    queryFn: () => apiFetch<GatewayDetailAdmin>(`/admin/gateways/${id}`),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCreateGateway() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: {
@@ -234,38 +213,38 @@ export function useCreateDevice() {
       device_key: string;
       name: string;
       location: string | null;
-    }) => postJson<CreateDeviceResponse>('/admin/devices', input),
+    }) => postJson<CreateGatewayResponse>('/admin/gateways', input),
     onSuccess: (_data, vars) => {
-      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
       void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
       void qc.invalidateQueries({ queryKey: ['admin', 'users', vars.user_id] });
     },
   });
 }
 
-export function useUpdateDevice() {
+export function useUpdateGateway() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, patch }: { id: number; patch: DevicePatch }) =>
-      apiFetch<DeviceAdmin>(`/admin/devices/${id}`, {
+    mutationFn: ({ id, patch }: { id: number; patch: GatewayPatch }) =>
+      apiFetch<GatewayAdmin>(`/admin/gateways/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
       }),
     onSuccess: (_data, vars) => {
-      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
-      void qc.invalidateQueries({ queryKey: ['admin', 'devices', vars.id] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways', vars.id] });
       void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
     },
   });
 }
 
-export function useDeleteDevice() {
+export function useDeleteGateway() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) =>
-      apiFetch<void>(`/admin/devices/${id}`, { method: 'DELETE' }),
+      apiFetch<void>(`/admin/gateways/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
       void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
     },
   });
@@ -274,15 +253,158 @@ export function useDeleteDevice() {
 export function useRotateMqttPassword() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) =>
+    mutationFn: (gatewayId: number) =>
       postJson<RotateMqttResponse>(
-        `/admin/devices/${id}/rotate-mqtt-password`,
+        `/admin/gateways/${gatewayId}/rotate-mqtt-password`,
         {},
       ),
-    onSuccess: (_data, id) => {
-      void qc.invalidateQueries({ queryKey: ['admin', 'devices'] });
-      void qc.invalidateQueries({ queryKey: ['admin', 'devices', id] });
+    onSuccess: (_data, gatewayId) => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways', gatewayId] });
       void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
+}
+
+// ===========================================================================
+// Admin: pending controllers
+// ===========================================================================
+
+export function useAcceptPendingController() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      pendingId,
+      name,
+      location,
+    }: {
+      pendingId: number;
+      name: string;
+      location: string | null;
+    }) =>
+      postJson<unknown>(`/admin/pending-controllers/${pendingId}/accept`, {
+        name,
+        location,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
+    },
+  });
+}
+
+export function useRejectPendingController() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pendingId: number) =>
+      postJson<unknown>(`/admin/pending-controllers/${pendingId}/reject`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
+    },
+  });
+}
+
+// ===========================================================================
+// Admin: controllers
+// ===========================================================================
+
+export function useAdminController(id: number) {
+  return useQuery({
+    queryKey: ['admin', 'controllers', id],
+    queryFn: () => apiFetch<ControllerDetail>(`/admin/controllers/${id}`),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useAdminControllerReadings(
+  controllerId: number,
+  range: TimeRange,
+  enabled: boolean = true,
+) {
+  return useQuery({
+    queryKey: ['admin', 'controllers', controllerId, 'readings', range],
+    queryFn: () => {
+      const params = buildRangeParams(range);
+      return apiFetch<ReadingPoint[]>(
+        `/admin/controllers/${controllerId}/readings?${params}`,
+      );
+    },
+    refetchInterval: 60_000,
+    enabled,
+  });
+}
+
+export function useAdminControllerTelemetry(
+  controllerId: number,
+  range: TimeRange,
+  enabled: boolean = true,
+) {
+  return useQuery({
+    queryKey: ['admin', 'controllers', controllerId, 'telemetry', range],
+    queryFn: () => {
+      const params = buildRangeParams(range);
+      return apiFetch<TelemetryPoint[]>(
+        `/admin/controllers/${controllerId}/telemetry?${params}`,
+      );
+    },
+    refetchInterval: 60_000,
+    enabled,
+  });
+}
+
+export function useUpdateController() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: ControllerPatch }) =>
+      apiFetch<ControllerDetail>(`/admin/controllers/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({
+        queryKey: ['admin', 'controllers', vars.id],
+      });
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
+    },
+  });
+}
+
+export function useDeleteController() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/admin/controllers/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'controllers'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'gateways'] });
+    },
+  });
+}
+
+// ===========================================================================
+// Admin: nodes
+// ===========================================================================
+
+export function useUpdateNode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: NodePatch }) =>
+      apiFetch<unknown>(`/admin/nodes/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'controllers'] });
+    },
+  });
+}
+
+export function useDeleteNode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/admin/nodes/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'controllers'] });
     },
   });
 }

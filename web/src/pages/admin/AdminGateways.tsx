@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { useAdminDevices } from '../../lib/hooks';
-import type { DeviceAdmin, DeviceStatus } from '../../lib/types';
+import { AddGatewayModal } from '../../components/admin/AddGatewayModal';
+import { useAdminGateways } from '../../lib/hooks';
+import type { DeviceStatus, GatewayAdmin } from '../../lib/types';
 
 const ONLINE_WINDOW_MS = 5 * 60_000;
 
-function deviceOnline(d: DeviceAdmin): boolean {
+function gatewayOnline(g: GatewayAdmin): boolean {
   return (
-    !!d.last_seen_at &&
-    Date.now() - new Date(d.last_seen_at).getTime() < ONLINE_WINDOW_MS
+    !!g.last_seen_at &&
+    Date.now() - new Date(g.last_seen_at).getTime() < ONLINE_WINDOW_MS
   );
 }
 
@@ -19,19 +20,19 @@ const STATUS_CHOICES: { value: DeviceStatus | null; label: string }[] = [
   { value: 'offline', label: 'Offline' },
 ];
 
-export function AdminDevices() {
+export function AdminGateways() {
   const navigate = useNavigate();
   const [searchInput, setSearchInput] = useState('');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<DeviceStatus | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
 
-  // Debounce the search input 300ms before triggering the query.
   useEffect(() => {
     const t = setTimeout(() => setQ(searchInput), 300);
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const { data: devices, isLoading, error } = useAdminDevices({
+  const { data: gateways, isLoading, error } = useAdminGateways({
     q: q || undefined,
     status: status ?? undefined,
   });
@@ -39,7 +40,14 @@ export function AdminDevices() {
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Devices</h1>
+        <h1 className="text-2xl font-bold">Gateways</h1>
+        <button
+          type="button"
+          onClick={() => setShowAdd(true)}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-medium"
+        >
+          + Add Gateway
+        </button>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-3 mb-4 flex gap-2 items-center">
@@ -77,11 +85,11 @@ export function AdminDevices() {
           Error: {(error as Error).message}
         </div>
       )}
-      {devices && devices.length === 0 && !isLoading && (
-        <div className="text-sm text-gray-500">No devices match.</div>
+      {gateways && gateways.length === 0 && !isLoading && (
+        <div className="text-sm text-gray-500">No gateways match.</div>
       )}
 
-      {devices && devices.length > 0 && (
+      {gateways && gateways.length > 0 && (
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left">
@@ -92,34 +100,35 @@ export function AdminDevices() {
                 <th className="px-4 py-2">Status</th>
                 <th className="px-4 py-2">MQTT</th>
                 <th className="px-4 py-2">Last Seen</th>
+                <th className="px-4 py-2">Controllers</th>
               </tr>
             </thead>
             <tbody>
-              {devices.map((d) => {
-                const online = deviceOnline(d);
+              {gateways.map((g) => {
+                const online = gatewayOnline(g);
                 return (
                   <tr
-                    key={d.id}
-                    onClick={() => navigate(`/admin/devices/${d.id}`)}
+                    key={g.id}
+                    onClick={() => navigate(`/admin/gateways/${g.id}`)}
                     className="border-t hover:bg-gray-50 cursor-pointer"
                   >
                     <td className="px-4 py-2 font-mono">
                       <Link
-                        to={`/admin/devices/${d.id}`}
+                        to={`/admin/gateways/${g.id}`}
                         onClick={(e) => e.stopPropagation()}
                         className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
                       >
-                        {d.device_key}
+                        {g.device_key}
                       </Link>
                     </td>
-                    <td className="px-4 py-2">{d.name}</td>
+                    <td className="px-4 py-2">{g.name}</td>
                     <td className="px-4 py-2 text-gray-600">
                       <Link
-                        to={`/admin/users/${d.owner.id}`}
+                        to={`/admin/users/${g.owner.id}`}
                         onClick={(e) => e.stopPropagation()}
                         className="hover:underline"
                       >
-                        {d.owner.email}
+                        {g.owner.email}
                       </Link>
                     </td>
                     <td className="px-4 py-2">
@@ -136,22 +145,25 @@ export function AdminDevices() {
                     <td className="px-4 py-2">
                       <span
                         className={`text-xs px-2 py-1 rounded ${
-                          d.mqtt_provisioned
+                          g.mqtt_provisioned
                             ? 'bg-green-100 text-green-700'
                             : 'bg-yellow-100 text-yellow-700'
                         }`}
                       >
-                        {d.mqtt_provisioned
+                        {g.mqtt_provisioned
                           ? '✓ Provisioned'
                           : '⚠ Not provisioned'}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-gray-600">
-                      {d.last_seen_at
-                        ? formatDistanceToNow(new Date(d.last_seen_at), {
+                      {g.last_seen_at
+                        ? formatDistanceToNow(new Date(g.last_seen_at), {
                             addSuffix: true,
                           })
                         : 'Never'}
+                    </td>
+                    <td className="px-4 py-2 text-gray-600">
+                      {g.controller_count}
                     </td>
                   </tr>
                 );
@@ -160,6 +172,8 @@ export function AdminDevices() {
           </table>
         </div>
       )}
+
+      <AddGatewayModal open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../../components/AuthGate';
-import { AddDeviceModal } from '../../components/admin/AddDeviceModal';
+import { AddGatewayModal } from '../../components/admin/AddGatewayModal';
 import { MqttCredentialsModal } from '../../components/admin/MqttCredentialsModal';
 import { ResendInvitationModal } from '../../components/admin/ResendInvitationModal';
 import { ResetLinkModal } from '../../components/admin/ResetLinkModal';
@@ -12,14 +12,14 @@ import {
   useDeleteUser,
   useReactivateUser,
 } from '../../lib/hooks';
-import type { DeviceForUser } from '../../lib/types';
+import type { GatewayForUser } from '../../lib/types';
 
 const ONLINE_WINDOW_MS = 5 * 60_000;
 
-function isOnline(d: DeviceForUser): boolean {
+function isOnline(g: GatewayForUser): boolean {
   return (
-    !!d.last_seen_at &&
-    Date.now() - new Date(d.last_seen_at).getTime() < ONLINE_WINDOW_MS
+    !!g.last_seen_at &&
+    Date.now() - new Date(g.last_seen_at).getTime() < ONLINE_WINDOW_MS
   );
 }
 
@@ -39,8 +39,10 @@ export function AdminUserDetail() {
   const reactivate = useReactivateUser();
   const del = useDeleteUser();
 
-  const [showAddDevice, setShowAddDevice] = useState(false);
-  const [rotateForDeviceId, setRotateForDeviceId] = useState<number | null>(null);
+  const [showAddGateway, setShowAddGateway] = useState(false);
+  const [rotateForGatewayId, setRotateForGatewayId] = useState<number | null>(
+    null,
+  );
   const [resetOpen, setResetOpen] = useState(false);
   const [resendOpen, setResendOpen] = useState(false);
 
@@ -64,7 +66,7 @@ export function AdminUserDetail() {
   const handleDelete = async () => {
     if (
       !window.confirm(
-        `Delete ${data.email}? This drops all of their devices and readings.`,
+        `Delete ${data.email}? This drops all of their gateways, controllers, and readings.`,
       )
     )
       return;
@@ -165,20 +167,20 @@ export function AdminUserDetail() {
 
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-semibold">
-          Devices ({data.devices.length})
+          Gateways ({data.gateways.length})
         </h2>
         <button
           type="button"
-          onClick={() => setShowAddDevice(true)}
+          onClick={() => setShowAddGateway(true)}
           className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm font-medium"
         >
-          + Add device
+          + Add gateway
         </button>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-        {data.devices.length === 0 ? (
-          <p className="text-sm text-gray-500 p-4">No devices yet.</p>
+        {data.gateways.length === 0 ? (
+          <p className="text-sm text-gray-500 p-4">No gateways yet.</p>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left">
@@ -186,6 +188,7 @@ export function AdminUserDetail() {
                 <th className="px-4 py-2">Device key</th>
                 <th className="px-4 py-2">Name</th>
                 <th className="px-4 py-2">Location</th>
+                <th className="px-4 py-2">Controllers</th>
                 <th className="px-4 py-2">Last Seen</th>
                 <th className="px-4 py-2">MQTT</th>
                 <th className="px-4 py-2">Status</th>
@@ -193,30 +196,33 @@ export function AdminUserDetail() {
               </tr>
             </thead>
             <tbody>
-              {data.devices.map((d) => {
-                const online = isOnline(d);
+              {data.gateways.map((g) => {
+                const online = isOnline(g);
                 return (
                   <tr
-                    key={d.id}
-                    onClick={() => navigate(`/admin/devices/${d.id}`)}
+                    key={g.id}
+                    onClick={() => navigate(`/admin/gateways/${g.id}`)}
                     className="border-t hover:bg-gray-50 cursor-pointer"
                   >
                     <td className="px-4 py-2 font-mono">
                       <Link
-                        to={`/admin/devices/${d.id}`}
+                        to={`/admin/gateways/${g.id}`}
                         onClick={(e) => e.stopPropagation()}
                         className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
                       >
-                        {d.device_key}
+                        {g.device_key}
                       </Link>
                     </td>
-                    <td className="px-4 py-2">{d.name}</td>
+                    <td className="px-4 py-2">{g.name}</td>
                     <td className="px-4 py-2 text-gray-600">
-                      {d.location || '—'}
+                      {g.location || '—'}
                     </td>
                     <td className="px-4 py-2 text-gray-600">
-                      {d.last_seen_at
-                        ? formatDistanceToNow(new Date(d.last_seen_at), {
+                      {g.controller_count}
+                    </td>
+                    <td className="px-4 py-2 text-gray-600">
+                      {g.last_seen_at
+                        ? formatDistanceToNow(new Date(g.last_seen_at), {
                             addSuffix: true,
                           })
                         : 'Never'}
@@ -224,12 +230,12 @@ export function AdminUserDetail() {
                     <td className="px-4 py-2">
                       <span
                         className={`text-xs px-2 py-1 rounded ${
-                          d.mqtt_provisioned
+                          g.mqtt_provisioned
                             ? 'bg-green-100 text-green-700'
                             : 'bg-yellow-100 text-yellow-700'
                         }`}
                       >
-                        {d.mqtt_provisioned
+                        {g.mqtt_provisioned
                           ? '✓ Provisioned'
                           : '⚠ Not provisioned'}
                       </span>
@@ -250,11 +256,11 @@ export function AdminUserDetail() {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setRotateForDeviceId(d.id);
+                          setRotateForGatewayId(g.id);
                         }}
                         className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700"
                       >
-                        {d.mqtt_provisioned ? 'Rotate MQTT' : 'Generate MQTT'}
+                        {g.mqtt_provisioned ? 'Rotate MQTT' : 'Generate MQTT'}
                       </button>
                     </td>
                   </tr>
@@ -265,9 +271,9 @@ export function AdminUserDetail() {
         )}
       </div>
 
-      <AddDeviceModal
-        open={showAddDevice}
-        onClose={() => setShowAddDevice(false)}
+      <AddGatewayModal
+        open={showAddGateway}
+        onClose={() => setShowAddGateway(false)}
         userId={userId}
       />
       <ResetLinkModal
@@ -280,11 +286,11 @@ export function AdminUserDetail() {
         open={resendOpen}
         onClose={() => setResendOpen(false)}
       />
-      {rotateForDeviceId !== null && (
+      {rotateForGatewayId !== null && (
         <MqttCredentialsModal
           open={true}
-          onClose={() => setRotateForDeviceId(null)}
-          deviceId={rotateForDeviceId}
+          onClose={() => setRotateForGatewayId(null)}
+          gatewayId={rotateForGatewayId}
         />
       )}
     </div>

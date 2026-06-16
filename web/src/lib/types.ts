@@ -5,31 +5,84 @@ export type User = {
   is_admin: boolean;
 };
 
-export type Device = {
+// ===========================================================================
+// User-facing controller types
+// ===========================================================================
+
+export type GatewayBrief = {
   id: number;
   device_key: string;
   name: string;
-  location: string | null;
-  last_seen_at: string | null;
+  location?: string | null;
 };
 
-export type Reading = {
-  time: string;
-  temperature: number;
-  lux: number;
-  battery_raw: number | null;
+export type ControllerLatest = {
+  time: string | null;
+  temperature_avg: number | null;
   battery_v: number | null;
-  rssi: number | null;
+  door_open: boolean | null;
+  any_node_error: boolean;
 };
 
-export type DeviceWithLatestReading = {
-  device: Device;
-  latest: Reading | null;
+export type Controller = {
+  id: number;
+  sn: string;
+  name: string;
+  location: string | null;
+  gateway: GatewayBrief;
+  node_count: number;
+  last_seen_at: string | null;
+  latest: ControllerLatest;
+};
+
+export type NodeLatest = {
+  time: string | null;
+  temperature: number | null;
+  lux: number | null;
+  err: string | null;
+};
+
+export type NodeOut = {
+  id: number;
+  node_index: number;
+  name: string | null;
+  has_lux: boolean;
+  last_seen_at: string | null;
+  latest: NodeLatest;
+};
+
+export type LatestTelemetry = {
+  time: string | null;
+  battery_v: number | null;
+  door_open: boolean | null;
+};
+
+export type ControllerDetail = {
+  id: number;
+  sn: string;
+  name: string;
+  location: string | null;
+  gateway: GatewayBrief;
+  nodes: NodeOut[];
+  latest_telemetry: LatestTelemetry;
+};
+
+export type ReadingPoint = {
+  time: string;
+  temperature_avg: number | null;
+};
+
+export type TelemetryPoint = {
+  time: string;
+  battery_v: number | null;
+  door_open: boolean | null;
 };
 
 export type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d';
 
-// ---------- Admin types ----------
+// ===========================================================================
+// Admin types
+// ===========================================================================
 
 export type UserAdmin = {
   id: number;
@@ -40,10 +93,10 @@ export type UserAdmin = {
   last_login_at: string | null;
   created_at: string;
   has_password: boolean;
-  device_count: number;
+  gateway_count: number;
 };
 
-export type DeviceForUser = {
+export type GatewayForUser = {
   id: number;
   device_key: string;
   name: string;
@@ -51,10 +104,11 @@ export type DeviceForUser = {
   created_at: string;
   last_seen_at: string | null;
   mqtt_provisioned: boolean;
+  controller_count: number;
 };
 
 export type UserAdminDetail = UserAdmin & {
-  devices: DeviceForUser[];
+  gateways: GatewayForUser[];
 };
 
 export type Owner = {
@@ -63,7 +117,7 @@ export type Owner = {
   display_name: string;
 };
 
-export type DeviceAdmin = {
+export type GatewayAdmin = {
   id: number;
   device_key: string;
   name: string;
@@ -72,6 +126,30 @@ export type DeviceAdmin = {
   last_seen_at: string | null;
   mqtt_provisioned: boolean;
   owner: Owner;
+  controller_count: number;
+};
+
+export type ControllerForGateway = {
+  id: number;
+  sn: string;
+  name: string;
+  location: string | null;
+  created_at: string;
+  last_seen_at: string | null;
+  node_count: number;
+};
+
+export type PendingController = {
+  id: number;
+  sn: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  message_count: number;
+};
+
+export type GatewayDetailAdmin = GatewayAdmin & {
+  controllers: ControllerForGateway[];
+  pending_controllers: PendingController[];
 };
 
 export type CreateUserResponse = {
@@ -87,8 +165,8 @@ export type InvitationLinkResponse = {
   invitation_url: string;
 };
 
-export type CreateDeviceResponse = {
-  device: DeviceAdmin;
+export type CreateGatewayResponse = {
+  gateway: GatewayAdmin;
   mqtt_password: string;
   ssh_command: string;
 };
@@ -100,9 +178,19 @@ export type RotateMqttResponse = {
 
 export type DeviceStatus = 'online' | 'offline';
 
-export type DevicePatch = Partial<{
+export type GatewayPatch = Partial<{
   name: string;
   location: string | null;
   user_id: number;
   mqtt_provisioned: boolean;
+}>;
+
+export type ControllerPatch = Partial<{
+  name: string;
+  location: string | null;
+}>;
+
+export type NodePatch = Partial<{
+  name: string;
+  has_lux: boolean;
 }>;
