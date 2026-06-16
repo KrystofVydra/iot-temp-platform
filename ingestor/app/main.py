@@ -1,8 +1,18 @@
 """Ingestor worker.
 
-Subscribes to MQTT, decodes telemetry payloads, and writes ``Reading`` rows
-to TimescaleDB. Maintains a device_key → device_id cache to avoid a SELECT
-on every message. Reconnects automatically on MQTT disconnect.
+Subscribes to MQTT, decodes telemetry payloads under the new topology
+(gateway → controller → node), and writes:
+  * one ``node_readings`` row per message (per-node temperature/lux/err)
+  * one ``controller_telemetry`` row per message (per-controller battery_v/door_open)
+
+Unknown controllers (sn we've never seen on this gateway) are recorded in
+``pending_controllers`` for the admin to accept before any readings land —
+this prevents an unprovisioned-but-MQTT-authenticated node from polluting
+the time-series.
+
+Nodes are auto-created on first sight (the admin can rename them later);
+the ``has_lux`` flag is captured at creation time from whether the first
+message carried a lux value.
 
 Run with ``python -m app.main``.
 """
@@ -15,32 +25,34 @@ import logging
 from datetime import UTC, datetime
 
 import aiomqtt
-from sqlalchemy import select, update
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .db import get_session_factory
-from .models import Device, Reading
-from .schemas import TelemetryPayload, to_reading_values
+from .models import Controller, ControllerTelemetry, Gateway, Node, NodeReading
+from .schemas import IncomingTelemetry
 
 log = logging.getLogger("ingestor")
 
-# device_key → device_id. Negative misses are intentionally not cached, so
-# a device provisioned after startup will be picked up on its next message.
-_device_id_cache: dict[str, int] = {}
 
-
-async def _get_device_id(session: AsyncSession, device_key: str) -> int | None:
-    cached = _device_id_cache.get(device_key)
-    if cached is not None:
-        return cached
-    result = await session.execute(
-        select(Device.id).where(Device.device_key == device_key)
+async def _record_pending_controller(
+    session: AsyncSession, gateway_id: int, sn: str, now: datetime
+) -> None:
+    """Upsert into pending_controllers. Raw SQL for the ON CONFLICT clause."""
+    await session.execute(
+        text(
+            """
+            INSERT INTO pending_controllers
+                (gateway_id, sn, first_seen_at, last_seen_at, message_count)
+            VALUES (:gateway_id, :sn, :now, :now, 1)
+            ON CONFLICT (gateway_id, sn) DO UPDATE
+            SET last_seen_at = EXCLUDED.last_seen_at,
+                message_count = pending_controllers.message_count + 1
+            """
+        ),
+        {"gateway_id": gateway_id, "sn": sn, "now": now},
     )
-    device_id = result.scalar_one_or_none()
-    if device_id is not None:
-        _device_id_cache[device_key] = device_id
-    return device_id
 
 
 async def _handle_message(topic: str, payload_bytes: bytes) -> None:
@@ -48,36 +60,129 @@ async def _handle_message(topic: str, payload_bytes: bytes) -> None:
     if len(parts) != 3 or parts[0] != "devices" or parts[2] != "telemetry":
         log.warning("ignoring unexpected topic: %s", topic)
         return
-    device_key = parts[1]
+    gateway_key = parts[1]
 
     try:
         raw = json.loads(payload_bytes)
-        payload = TelemetryPayload.model_validate(raw)
+        payload = IncomingTelemetry.model_validate(raw)
     except (ValueError, TypeError) as exc:
         log.warning("invalid payload on %s: %s", topic, exc)
         return
 
     session_factory = get_session_factory()
     async with session_factory() as session:
-        device_id = await _get_device_id(session, device_key)
-        if device_id is None:
-            log.warning("unknown device_key %s — dropping reading", device_key)
-            return
-
-        values = to_reading_values(payload)
         now = datetime.now(UTC)
-        session.add(Reading(time=now, device_id=device_id, **values))
-        await session.execute(
-            update(Device).where(Device.id == device_id).values(last_seen_at=now)
+
+        # 1. Gateway must exist (provisioned via the admin panel).
+        gateway = (
+            await session.execute(
+                select(Gateway).where(Gateway.device_key == gateway_key)
+            )
+        ).scalar_one_or_none()
+        if gateway is None:
+            log.warning(
+                "unknown gateway_key %s — dropping (MQTT ACL should have blocked)",
+                gateway_key,
+            )
+            return
+        gateway.last_seen_at = now
+
+        # 2. Controller — accepted controllers only. Unknowns get staged.
+        controller = (
+            await session.execute(
+                select(Controller).where(
+                    Controller.gateway_id == gateway.id,
+                    Controller.sn == payload.sn,
+                )
+            )
+        ).scalar_one_or_none()
+        if controller is None:
+            await _record_pending_controller(session, gateway.id, payload.sn, now)
+            await session.commit()
+            log.info(
+                "pending controller sn=%s on gateway %s (message dropped)",
+                payload.sn,
+                gateway_key,
+            )
+            return
+        controller.last_seen_at = now
+
+        # 3. Node — auto-created on first sight. has_lux captured from this message.
+        node = (
+            await session.execute(
+                select(Node).where(
+                    Node.controller_id == controller.id,
+                    Node.node_index == payload.node.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if node is None:
+            node = Node(
+                controller_id=controller.id,
+                node_index=payload.node.id,
+                name=None,
+                has_lux=payload.node.l is not None,
+                last_seen_at=now,
+            )
+            session.add(node)
+            await session.flush()  # populate node.id for the FK below
+            log.info(
+                "auto-created node idx=%d on controller sn=%s has_lux=%s",
+                payload.node.id,
+                payload.sn,
+                node.has_lux,
+            )
+        node.last_seen_at = now
+
+        # 4. Build the per-node reading.
+        temperature = payload.node.t  # already None if omitted
+        lux: int | None = None
+        if payload.node.l is not None:
+            if node.has_lux:
+                lux = payload.node.l
+            else:
+                log.debug(
+                    "discarding lux for has_lux=false node idx=%d controller sn=%s",
+                    payload.node.id,
+                    payload.sn,
+                )
+        err = payload.node.err
+
+        # 5. Build the per-controller telemetry (battery + door).
+        battery_v = round(1.4 + (payload.b / 255.0) * 2.2, 3)
+        door_open = payload.d == 1
+
+        session.add(
+            NodeReading(
+                time=now,
+                node_id=node.id,
+                temperature=temperature,
+                lux=lux,
+                err=err,
+            )
+        )
+        session.add(
+            ControllerTelemetry(
+                time=now,
+                controller_id=controller.id,
+                battery_v=battery_v,
+                door_open=door_open,
+            )
         )
         await session.commit()
-        log.info(
-            "stored reading device=%s temp=%.2f°C lux=%d batt=%dmV",
-            device_key,
-            values["temperature"],
-            values["lux"],
-            values["battery_raw"],
-        )
+
+        # 6. Log line — skip None-valued fields so the output stays readable.
+        log_fields = [
+            f"controller={payload.sn}",
+            f"node={payload.node.id}",
+        ]
+        if temperature is not None:
+            log_fields.append(f"temp={temperature:.2f}")
+        if lux is not None:
+            log_fields.append(f"lux={lux}")
+        if err is not None:
+            log_fields.append(f"err={err}")
+        log.info("stored reading %s", " ".join(log_fields))
 
 
 async def run() -> None:
