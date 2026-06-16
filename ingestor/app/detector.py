@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, text
@@ -150,6 +150,10 @@ async def find_active_notification(
     deepest entity given; upper-level FKs are not constrained because
     open_notification populates them for context but they're not part of
     the notification's identity.
+
+    If multiple actives exist (e.g. duplicates from a past bug or a race),
+    keep the OLDEST and silently resolve the rest as duplicate cleanup so
+    the caller always sees at most one row.
     """
     stmt = select(Notification).where(
         Notification.user_id == user_id,
@@ -162,7 +166,31 @@ async def find_active_notification(
         stmt = stmt.where(Notification.controller_id == controller_id)
     elif gateway_id is not None:
         stmt = stmt.where(Notification.gateway_id == gateway_id)
-    return (await session.execute(stmt)).scalar_one_or_none()
+    stmt = stmt.order_by(Notification.opened_at.asc())
+    rows = (await session.execute(stmt)).scalars().all()
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    # Multiple actives — keep the oldest, resolve the rest as duplicates.
+    canonical = rows[0]
+    extras = rows[1:]
+    log.warning(
+        "found %d duplicate active notifications for kind=%s user=%s "
+        "(gateway=%s controller=%s node=%s); resolving %d extras as duplicate cleanup",
+        len(rows),
+        kind,
+        user_id,
+        gateway_id,
+        controller_id,
+        node_id,
+        len(extras),
+    )
+    now = datetime.now(UTC)
+    for extra in extras:
+        extra.resolved_at = now
+    await session.flush()
+    return canonical
 
 
 async def open_notification(
