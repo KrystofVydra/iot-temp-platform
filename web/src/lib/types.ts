@@ -234,6 +234,20 @@ export interface NotificationListResponse {
   active: number;
 }
 
+export interface AdminNotification extends Notification {
+  user: { id: number; email: string; display_name: string };
+}
+
+export interface AdminNotificationListResponse {
+  notifications: AdminNotification[];
+  total: number;
+}
+
+export interface TestNotificationPayload {
+  user_id: number;
+  kind: string;
+}
+
 export interface KindDefault {
   kind: string;
   severity: NotificationSeverity;

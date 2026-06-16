@@ -16,6 +16,7 @@ import { AdminControllerDetail } from './pages/admin/AdminControllerDetail';
 import { AdminGatewayDetail } from './pages/admin/AdminGatewayDetail';
 import { AdminGateways } from './pages/admin/AdminGateways';
 import { AdminNotificationDefaults } from './pages/admin/AdminNotificationDefaults';
+import { AdminNotifications } from './pages/admin/AdminNotifications';
 import { AdminUserDetail } from './pages/admin/AdminUserDetail';
 import { AdminUsers } from './pages/admin/AdminUsers';
 
@@ -91,6 +92,7 @@ function App() {
                   path="controllers/:id"
                   element={<AdminControllerDetail />}
                 />
+                <Route path="notifications" element={<AdminNotifications />} />
                 <Route
                   path="notification-defaults"
                   element={<AdminNotificationDefaults />}

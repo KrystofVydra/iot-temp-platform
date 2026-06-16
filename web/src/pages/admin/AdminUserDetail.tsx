@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../../components/AuthGate';
 import { AddGatewayModal } from '../../components/admin/AddGatewayModal';
+import { AdminUserNotificationsPanel } from '../../components/admin/AdminUserNotificationsPanel';
 import { MqttCredentialsModal } from '../../components/admin/MqttCredentialsModal';
 import { ResendInvitationModal } from '../../components/admin/ResendInvitationModal';
 import { ResetLinkModal } from '../../components/admin/ResetLinkModal';
@@ -269,6 +270,10 @@ export function AdminUserDetail() {
             </tbody>
           </table>
         )}
+      </div>
+
+      <div className="mt-10">
+        <AdminUserNotificationsPanel userId={userId} />
       </div>
 
       <AddGatewayModal

@@ -40,13 +40,17 @@ from ..models import (
     Node,
     Notification,
     NotificationKindDefault,
+    NotificationSetting,
     PendingController,
     User,
 )
 from ..models import Session as UserSession
 from ..notification_messages import build_summary
+from ..notification_validation import validate_thresholds
 from ..schemas import (
     AcceptPendingControllerIn,
+    AdminNotificationListOut,
+    AdminNotificationOut,
     ControllerDetailOut,
     ControllerForGatewayOut,
     CreateGatewayIn,
@@ -59,25 +63,28 @@ from ..schemas import (
     InvitationLinkOut,
     NotificationKindDefaultOut,
     NotificationOut,
+    NotificationSettingOut,
     OwnerOut,
     PatchControllerIn,
     PatchGatewayIn,
     PatchKindDefaultIn,
     PatchNodeIn,
+    PatchNotificationSettingIn,
     PendingControllerOut,
     ReadingsPointOut,
     ResetLinkOut,
     RotateMqttOut,
     TelemetryPointOut,
+    TestNotificationIn,
     UserAdminDetailOut,
     UserAdminOut,
+    UserBrief,
 )
 from .controllers import (
     _build_controller_detail,
     _fetch_controller_readings,
     _fetch_controller_telemetry,
 )
-from .notifications import _validate_thresholds
 
 log = logging.getLogger("admin")
 
@@ -953,7 +960,7 @@ async def patch_kind_default(
     if payload.enabled_default is not None:
         row.enabled_default = payload.enabled_default
     if payload.thresholds is not None:
-        row.thresholds = _validate_thresholds(
+        row.thresholds = validate_thresholds(
             kind, payload.thresholds, set(row.thresholds or {})
         )
     row.updated_at = datetime.now(UTC)
@@ -971,31 +978,76 @@ async def patch_kind_default(
     )
 
 
-@router.get("/notifications", response_model=list[NotificationOut])
+@router.get("/notifications", response_model=AdminNotificationListOut)
 async def admin_list_notifications(
     user_id: int | None = Query(default=None),
+    user_email: str | None = Query(default=None),
     status_filter: Literal["active", "all", "resolved"] = Query(
         default="all", alias="status"
     ),
     kind: str | None = Query(default=None),
+    severity: Literal["critical", "alert"] | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-) -> list[NotificationOut]:
-    """Cross-user notification log. Same filters as the user view minus the
-    user scope (admin can target a specific user with ?user_id=)."""
-    stmt = select(Notification)
+) -> AdminNotificationListOut:
+    """Cross-user notification log with pagination.
+
+    All filters are AND-combined. ``user_email`` is an ILIKE substring
+    search (so ``"@acme.com"`` matches any user at that domain).
+    ``total`` in the response counts rows matching the filter, not the
+    page size.
+    """
+    # Escape SQL LIKE wildcards so admins typing literal '_' / '%' in an
+    # email get a literal substring search rather than a regex surprise.
+    email_pattern: str | None = None
+    if user_email:
+        escaped = user_email.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+        email_pattern = f"%{escaped}%"
+
+    base = select(Notification).join(User, User.id == Notification.user_id)
     if user_id is not None:
-        stmt = stmt.where(Notification.user_id == user_id)
+        base = base.where(Notification.user_id == user_id)
+    if email_pattern is not None:
+        base = base.where(User.email.ilike(email_pattern, escape="\\"))
     if status_filter == "active":
-        stmt = stmt.where(Notification.resolved_at.is_(None))
+        base = base.where(Notification.resolved_at.is_(None))
     elif status_filter == "resolved":
-        stmt = stmt.where(Notification.resolved_at.is_not(None))
+        base = base.where(Notification.resolved_at.is_not(None))
     if kind is not None:
-        stmt = stmt.where(Notification.kind == kind)
-    stmt = stmt.order_by(Notification.opened_at.desc()).limit(limit)
-    rows = (await db.execute(stmt)).scalars().all()
-    return [
-        NotificationOut(
+        base = base.where(Notification.kind == kind)
+    if severity is not None:
+        base = base.where(Notification.severity == severity)
+
+    count_stmt = select(sa.func.count()).select_from(base.subquery())
+    total = (await db.execute(count_stmt)).scalar_one()
+
+    page_stmt = (
+        select(Notification, User)
+        .join(User, User.id == Notification.user_id)
+        .order_by(Notification.opened_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    # Re-apply the same WHERE filters on the joined query so we don't have
+    # to re-derive them from the subquery (which would require row-by-row
+    # IN lookups).
+    if user_id is not None:
+        page_stmt = page_stmt.where(Notification.user_id == user_id)
+    if email_pattern is not None:
+        page_stmt = page_stmt.where(User.email.ilike(email_pattern, escape="\\"))
+    if status_filter == "active":
+        page_stmt = page_stmt.where(Notification.resolved_at.is_(None))
+    elif status_filter == "resolved":
+        page_stmt = page_stmt.where(Notification.resolved_at.is_not(None))
+    if kind is not None:
+        page_stmt = page_stmt.where(Notification.kind == kind)
+    if severity is not None:
+        page_stmt = page_stmt.where(Notification.severity == severity)
+
+    rows = (await db.execute(page_stmt)).all()
+    notifications = [
+        AdminNotificationOut(
             id=n.id,
             kind=n.kind,
             severity=n.severity,
@@ -1009,6 +1061,368 @@ async def admin_list_notifications(
             resolved_at=n.resolved_at,
             read_at=n.read_at,
             summary=build_summary(n.kind, n.subject_name, n.details),
+            user=UserBrief(id=u.id, email=u.email, display_name=u.display_name),
         )
-        for n in rows
+        for n, u in rows
     ]
+    return AdminNotificationListOut(
+        notifications=notifications, total=int(total)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin-on-behalf: per-user notification settings + test-fire
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/users/{user_id}/notification-settings",
+    response_model=list[NotificationSettingOut],
+)
+async def admin_get_user_settings(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> list[NotificationSettingOut]:
+    """List one user's per-kind settings — same shape as /me equivalent."""
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    rows = (
+        await db.execute(
+            select(NotificationSetting, NotificationKindDefault)
+            .join(
+                NotificationKindDefault,
+                NotificationKindDefault.kind == NotificationSetting.kind,
+            )
+            .where(NotificationSetting.user_id == user_id)
+            .order_by(NotificationKindDefault.kind.asc())
+        )
+    ).all()
+    return [
+        NotificationSettingOut(
+            kind=ns.kind,
+            severity=kd.severity,
+            scope=kd.scope,
+            enabled=ns.enabled,
+            thresholds=dict(ns.thresholds or {}),
+            description=kd.description,
+        )
+        for ns, kd in rows
+    ]
+
+
+@router.patch(
+    "/users/{user_id}/notification-settings/{kind}",
+    response_model=NotificationSettingOut,
+)
+async def admin_patch_user_setting(
+    user_id: int,
+    kind: str,
+    payload: PatchNotificationSettingIn,
+    db: AsyncSession = Depends(get_db),
+) -> NotificationSettingOut:
+    """Edit a user's per-kind setting on their behalf. Same validation as
+    the /me/notifications endpoint — paired-threshold rules and key
+    whitelist are reused via :func:`validate_thresholds`."""
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+
+    kind_row = await db.get(NotificationKindDefault, kind)
+    if kind_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown notification kind")
+
+    setting = (
+        await db.execute(
+            select(NotificationSetting).where(
+                NotificationSetting.user_id == user_id,
+                NotificationSetting.kind == kind,
+            )
+        )
+    ).scalar_one_or_none()
+    if setting is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "notification setting missing for this user/kind",
+        )
+
+    if payload.enabled is not None:
+        setting.enabled = payload.enabled
+    if payload.thresholds is not None:
+        setting.thresholds = validate_thresholds(
+            kind, payload.thresholds, set(kind_row.thresholds or {})
+        )
+    setting.updated_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(setting)
+    log.info(
+        "admin patched user notification setting user=%s kind=%s", user_id, kind
+    )
+    return NotificationSettingOut(
+        kind=setting.kind,
+        severity=kind_row.severity,
+        scope=kind_row.scope,
+        enabled=setting.enabled,
+        thresholds=dict(setting.thresholds or {}),
+        description=kind_row.description,
+    )
+
+
+async def _pick_test_entity(
+    db: AsyncSession, user_id: int, scope: str
+) -> tuple[int | None, int | None, int | None, str | None]:
+    """Pick a representative entity for a test notification.
+
+    Selection: lowest-id row of the appropriate type owned by the user
+    (chosen for deterministic, reproducible test fires). Returns
+    ``(gateway_id, controller_id, node_id, subject_name)`` with the
+    higher-level FKs always populated for consistency with how the
+    detector writes them. ``subject_name`` carries the " [TEST]" suffix
+    so the UI can render it as obviously synthetic.
+    """
+    if scope == "gateway":
+        row = (
+            await db.execute(
+                select(Gateway)
+                .where(Gateway.user_id == user_id)
+                .order_by(Gateway.id.asc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None, None, None, None
+        return row.id, None, None, f"{row.name} [TEST]"
+
+    if scope == "controller":
+        row = (
+            await db.execute(
+                select(Controller, Gateway)
+                .join(Gateway, Gateway.id == Controller.gateway_id)
+                .where(Gateway.user_id == user_id)
+                .order_by(Controller.id.asc())
+                .limit(1)
+            )
+        ).first()
+        if row is None:
+            return None, None, None, None
+        c, g = row
+        return g.id, c.id, None, f"{c.name} [TEST]"
+
+    if scope == "node":
+        row = (
+            await db.execute(
+                select(Node, Controller, Gateway)
+                .join(Controller, Controller.id == Node.controller_id)
+                .join(Gateway, Gateway.id == Controller.gateway_id)
+                .where(Gateway.user_id == user_id)
+                .order_by(Node.id.asc())
+                .limit(1)
+            )
+        ).first()
+        if row is None:
+            return None, None, None, None
+        n, c, g = row
+        return g.id, c.id, n.id, f"{c.name} - Node {n.node_index} [TEST]"
+
+    return None, None, None, None
+
+
+def _build_test_details(
+    kind: str,
+    thresholds: dict[str, float],
+    now: datetime,
+    node_index: int | None,
+    sibling_controller_ids: list[int],
+) -> dict[str, object]:
+    """Per-kind 'believable' detail payload for a test notification.
+
+    Every kind gets ``is_test=True`` and the kind's threshold values so
+    the summary template renders meaningfully. Observation values are
+    seeded just past the trip threshold so the summary reads like a real
+    firing condition. Nothing here is wired into the detector — the row
+    is inserted directly.
+    """
+    base: dict[str, object] = {"is_test": True, **(thresholds or {})}
+
+    if kind == "temp_safe":
+        safe_max = float(thresholds.get("safe_max", 6.0))
+        safe_min = float(thresholds.get("safe_min", 2.0))
+        return {
+            **base,
+            "observed": round(safe_max + 1.5, 2),
+            "threshold_min": safe_min,
+            "threshold_max": safe_max,
+            "direction": "above",
+        }
+    if kind == "temp_preferred":
+        pref_max = float(thresholds.get("preferred_max", 5.0))
+        pref_min = float(thresholds.get("preferred_min", 3.0))
+        return {
+            **base,
+            "observed": round(pref_max + 0.7, 2),
+            "threshold_min": pref_min,
+            "threshold_max": pref_max,
+            "direction": "above",
+        }
+    if kind == "temp_drift":
+        window = int(thresholds.get("drift_minutes", 10))
+        drift = float(thresholds.get("drift_c", 3.0))
+        return {
+            **base,
+            "current": 8.0,
+            "previous": 8.0 - (drift + 0.5),
+            "delta": round(drift + 0.5, 2),
+            "delta_c": round(drift + 0.5, 2),
+            "window_minutes": window,
+            "drift_minutes": window,
+        }
+    if kind == "door_open":
+        threshold = int(thresholds.get("max_open_minutes", 5))
+        open_since = (now - timedelta(minutes=threshold + 2)).isoformat()
+        return {
+            **base,
+            "open_since": open_since,
+            "open_minutes": threshold + 2,
+            "threshold_minutes": threshold,
+        }
+    if kind in ("controller_offline", "gateway_offline"):
+        threshold = int(thresholds.get("offline_minutes", 5))
+        last_seen = (now - timedelta(minutes=threshold + 5)).isoformat()
+        return {
+            **base,
+            "last_seen_at": last_seen,
+            "offline_minutes": threshold,
+        }
+    if kind == "multi_controller_offline":
+        return {
+            **base,
+            "offline_controller_count": max(2, len(sibling_controller_ids)),
+            "offline_controller_ids": sibling_controller_ids,
+        }
+    if kind == "battery_critical":
+        crit = int(thresholds.get("critical_pct", 10))
+        return {**base, "observed_pct": max(0, crit - 2), "threshold_pct": crit}
+    if kind == "battery_low":
+        low = int(thresholds.get("low_pct", 25))
+        return {**base, "observed_pct": max(0, low - 3), "threshold_pct": low}
+    if kind == "node_error_single":
+        return {
+            **base,
+            "err": "sensor_temp",
+            "err_label": "Temp sensor",
+            "node_index": node_index if node_index is not None else 1,
+        }
+    if kind == "node_error_cumulative":
+        return {**base, "erroring_nodes": [], "error_count": 2}
+    return base
+
+
+@router.post(
+    "/users/{user_id}/notifications/test",
+    response_model=NotificationOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def admin_fire_test_notification(
+    user_id: int,
+    payload: TestNotificationIn,
+    db: AsyncSession = Depends(get_db),
+) -> NotificationOut:
+    """Insert a synthetic notification of ``payload.kind`` for ``user_id``.
+
+    The notification appears in the user's normal feed (mark-read /
+    dismiss work as usual). It carries ``details.is_test = True`` and a
+    ``[TEST]`` suffix in ``subject_name`` so the UI can render a
+    distinguishing badge.
+
+    Returns 400 if the user has no entity of the required scope (no
+    gateways for gateway-scoped kinds, no controllers for
+    controller-scoped, no nodes for node-scoped).
+    """
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+
+    kind_row = await db.get(NotificationKindDefault, payload.kind)
+    if kind_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown notification kind")
+
+    gateway_id, controller_id, node_id, subject_name = await _pick_test_entity(
+        db, user_id, kind_row.scope
+    )
+    if subject_name is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"user has no {kind_row.scope} to attach a test notification to",
+        )
+
+    # Look up the lowest few sibling controller ids on the chosen gateway —
+    # used to populate believable ids for multi_controller_offline tests.
+    sibling_ids: list[int] = []
+    if gateway_id is not None:
+        sibling_ids = list(
+            (
+                await db.execute(
+                    select(Controller.id)
+                    .where(Controller.gateway_id == gateway_id)
+                    .order_by(Controller.id.asc())
+                    .limit(3)
+                )
+            ).scalars().all()
+        )
+
+    # For node_error_single the subject's node_index belongs in details so
+    # the summary template can substitute it.
+    node_index_for_details: int | None = None
+    if node_id is not None:
+        node_index_for_details = (
+            await db.execute(
+                select(Node.node_index).where(Node.id == node_id)
+            )
+        ).scalar_one_or_none()
+
+    now = datetime.now(UTC)
+    details = _build_test_details(
+        payload.kind,
+        dict(kind_row.thresholds or {}),
+        now,
+        node_index_for_details,
+        sibling_ids,
+    )
+
+    row = Notification(
+        user_id=user_id,
+        kind=payload.kind,
+        severity=kind_row.severity,
+        scope=kind_row.scope,
+        gateway_id=gateway_id,
+        controller_id=controller_id,
+        node_id=node_id,
+        subject_name=subject_name,
+        details=details,
+        opened_at=now,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    log.info(
+        "admin fired test notification kind=%s user=%s id=%s subject=%s",
+        payload.kind,
+        user_id,
+        row.id,
+        subject_name,
+    )
+    return NotificationOut(
+        id=row.id,
+        kind=row.kind,
+        severity=row.severity,
+        scope=row.scope,
+        gateway_id=row.gateway_id,
+        controller_id=row.controller_id,
+        node_id=row.node_id,
+        subject_name=row.subject_name,
+        details=dict(row.details or {}),
+        opened_at=row.opened_at,
+        resolved_at=row.resolved_at,
+        read_at=row.read_at,
+        summary=build_summary(row.kind, row.subject_name, row.details),
+    )

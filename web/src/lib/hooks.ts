@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch, postJson } from './api';
 import type {
+  AdminNotificationListResponse,
   Controller,
   ControllerDetail,
   ControllerPatch,
@@ -17,6 +18,7 @@ import type {
   NotificationListResponse,
   NotificationSetting,
   NotificationSettingPatch,
+  NotificationSeverity,
   NotificationStatusFilter,
   NodePatch,
   ReadingPoint,
@@ -532,13 +534,21 @@ export function useAdminUpdateKindDefault() {
 
 export function useAdminNotifications(filter: {
   user_id?: number;
+  user_email?: string;
   status?: NotificationStatusFilter;
   kind?: string;
+  severity?: NotificationSeverity;
+  limit?: number;
+  offset?: number;
 }) {
   const params = new URLSearchParams();
   if (filter.user_id !== undefined) params.set('user_id', String(filter.user_id));
+  if (filter.user_email) params.set('user_email', filter.user_email);
   if (filter.status) params.set('status', filter.status);
   if (filter.kind) params.set('kind', filter.kind);
+  if (filter.severity) params.set('severity', filter.severity);
+  if (filter.limit !== undefined) params.set('limit', String(filter.limit));
+  if (filter.offset !== undefined) params.set('offset', String(filter.offset));
   const qs = params.toString();
   return useQuery({
     queryKey: [
@@ -546,11 +556,67 @@ export function useAdminNotifications(filter: {
       'notifications',
       {
         user_id: filter.user_id ?? null,
+        user_email: filter.user_email ?? '',
         status: filter.status ?? '',
         kind: filter.kind ?? '',
+        severity: filter.severity ?? '',
+        limit: filter.limit ?? 0,
+        offset: filter.offset ?? 0,
       },
     ],
     queryFn: () =>
-      apiFetch<Notification[]>(`/admin/notifications${qs ? `?${qs}` : ''}`),
+      apiFetch<AdminNotificationListResponse>(
+        `/admin/notifications${qs ? `?${qs}` : ''}`,
+      ),
+  });
+}
+
+export function useAdminUserNotificationSettings(userId: number) {
+  return useQuery({
+    queryKey: ['admin', 'users', userId, 'notification-settings'],
+    queryFn: () =>
+      apiFetch<NotificationSetting[]>(
+        `/admin/users/${userId}/notification-settings`,
+      ),
+  });
+}
+
+export function useAdminUpdateUserNotificationSetting(userId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      kind,
+      patch,
+    }: {
+      kind: string;
+      patch: NotificationSettingPatch;
+    }) =>
+      apiFetch<NotificationSetting>(
+        `/admin/users/${userId}/notification-settings/${kind}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ['admin', 'users', userId, 'notification-settings'],
+      });
+    },
+  });
+}
+
+export function useAdminFireTestNotification() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ user_id, kind }: { user_id: number; kind: string }) =>
+      postJson<Notification>(`/admin/users/${user_id}/notifications/test`, {
+        kind,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'notifications'] });
+      // Bell badge for the targeted user will refresh on next tick — no
+      // direct access to /me/notifications cache from the admin context.
+    },
   });
 }

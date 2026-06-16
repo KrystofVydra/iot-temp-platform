@@ -99,6 +99,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
   const markRead = useMarkRead();
   const unread = notification.read_at === null;
   const resolved = notification.resolved_at !== null;
+  const isTest = notification.details?.is_test === true;
 
   const handleClick = () => {
     if (unread) markRead.mutate(notification.id);
@@ -114,11 +115,16 @@ function NotificationRow({ notification }: { notification: Notification }) {
       }`}
     >
       <div className="flex items-start gap-3">
-        <div className="flex flex-col items-center pt-1">
+        <div className="flex flex-col items-center pt-1 gap-1">
           <SeverityBadge severity={notification.severity} />
+          {isTest && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-500 text-white font-medium uppercase tracking-wide">
+              Test
+            </span>
+          )}
           {unread && (
             <span
-              className="mt-2 w-2 h-2 rounded-full bg-blue-600"
+              className="mt-1 w-2 h-2 rounded-full bg-blue-600"
               aria-label="Unread"
             />
           )}

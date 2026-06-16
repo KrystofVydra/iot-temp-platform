@@ -347,3 +347,32 @@ class NotificationListOut(BaseModel):
     total: int
     unread: int
     active: int
+
+
+class UserBrief(BaseModel):
+    """Denormalised user identity used in admin notification rows."""
+
+    id: int
+    email: str
+    display_name: str
+
+
+class AdminNotificationOut(NotificationOut):
+    """One row in GET /admin/notifications — adds the owning user."""
+
+    user: UserBrief
+
+
+class AdminNotificationListOut(BaseModel):
+    """GET /admin/notifications response envelope. ``total`` is the count
+    of rows matching the filter (not the page size), so the UI can show
+    pagination state without a second roundtrip."""
+
+    notifications: list[AdminNotificationOut]
+    total: int
+
+
+class TestNotificationIn(BaseModel):
+    """POST /admin/users/{user_id}/notifications/test body."""
+
+    kind: str

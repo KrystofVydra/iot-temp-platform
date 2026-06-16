@@ -17,6 +17,9 @@ export function AdminLayout() {
         <NavLink to="/admin/gateways" className={tabClass}>
           Gateways
         </NavLink>
+        <NavLink to="/admin/notifications" className={tabClass}>
+          All notifications
+        </NavLink>
         <NavLink to="/admin/notification-defaults" className={tabClass}>
           Notification defaults
         </NavLink>

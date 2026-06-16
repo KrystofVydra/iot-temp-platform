@@ -36,7 +36,7 @@ _TEMPLATES: dict[str, str] = {
         "{subject_name} hasn't reported in {offline_minutes} minutes"
     ),
     "multi_controller_offline": (
-        "{subject_name}: {affected_count} controllers went offline together"
+        "{subject_name}: {offline_controller_count} controllers went offline together"
     ),
     "battery_critical": (
         "{subject_name} battery critically low ({observed_pct}%)"
