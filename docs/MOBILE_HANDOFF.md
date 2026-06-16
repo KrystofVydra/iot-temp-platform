@@ -67,7 +67,7 @@ pending_controllers(id, gateway_id, sn, first_seen_at,
    -- Auto-populated by ingestor; admin accepts or rejects.
 node_readings(time, node_id, temperature, lux, err)
    -- TimescaleDB hypertable, compressed >7d
-controller_telemetry(time, controller_id, battery_v, door_open)
+controller_telemetry(time, controller_id, battery_pct, door_open)
    -- TimescaleDB hypertable, compressed >7d
 sessions(id, user_id, token_hash, created_at, expires_at,
          last_used_at, user_agent)
@@ -163,7 +163,7 @@ auth_tokens(id, user_id, kind, token_hash,
 {
   "source": 0,
   "sn": "4876",
-  "b": 200,
+  "b": 87,
   "d": 0,
   "node": {
     "id": 1,
@@ -175,14 +175,13 @@ auth_tokens(id, user_id, kind, token_hash,
 
   - `source` — uint8, future cellular/wifi switch
   - `sn` — controller serial number (last 4 chars)
-  - `b` — uint8 0..255, battery mapped to 1.4V..3.6V
+  - `b` — uint8 0..100, battery percentage (firmware computes per hardware revision)
   - `d` — uint8, door open boolean
   - `node.id` — node_index 1..5
   - `node.t` — float -99.99..99.99 °C, OMITTED on err
   - `node.l` — uint16 0..1310 lux, OMITTED on err or has_lux=false
   - `node.err` — optional, one of `sensor_lux` | `sensor_temp` | `sensor_both` | `comms`
 
-- **Battery conversion:** `volts = 1.4 + (b / 255.0) * 2.2`
 - **MQTT auth:** each gateway has a username (= device_key) with password
   registered in Mosquitto; ACL restricts each gateway to publish only on
   `devices/<gateway_key>/#`.

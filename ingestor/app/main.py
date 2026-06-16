@@ -149,9 +149,10 @@ async def _handle_message(topic: str, payload_bytes: bytes) -> None:
         err = payload.node.err
 
         # 5. Build the per-controller telemetry (battery + door). Firmware
-        # sends `b` as uint8 0..255 mapping linearly to 1.4..3.6 V; we store
-        # it as a 0..100 % integer (clamped) to keep the API surface simple.
-        battery_pct = max(0, min(100, round((payload.b / 255.0) * 100)))
+        # sends `b` as a 0..100 percentage directly (each revision handles
+        # its own chemistry → percentage mapping); Pydantic already enforced
+        # the range on parse.
+        battery_pct = payload.b
         door_open = payload.d == 1
 
         session.add(

@@ -5,7 +5,7 @@ Wire format (firmware-controlled — keep the validators in sync):
     {
       "source": 0,            // 0=wifi, 1=cellular (reserved)
       "sn":     "4876",       // last 4 chars of controller serial
-      "b":      200,          // uint8 battery, maps 1.4V..3.6V linearly
+      "b":      87,           // uint8 battery percentage 0..100 (firmware computes per hardware revision)
       "d":      0,            // 0=door closed, 1=door open
       "node": {
         "id":  1,             // 1..5
@@ -51,6 +51,6 @@ class IncomingTelemetry(BaseModel):
 
     source: int = Field(ge=0)
     sn: str = Field(min_length=1)
-    b: int = Field(ge=0, le=255)
+    b: int = Field(ge=0, le=100)
     d: int = Field(ge=0, le=1)
     node: IncomingTelemetryNode
