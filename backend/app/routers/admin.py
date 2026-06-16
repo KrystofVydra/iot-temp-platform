@@ -1,17 +1,15 @@
-"""Admin endpoints — user + device management, MQTT provisioning workflow.
+"""Admin endpoints — user, gateway, controller, node management.
 
-All endpoints are gated by router-level ``Depends(get_current_admin)``; the
-admin check applies uniformly so handlers don't repeat it. Endpoints that
-need the calling admin's identity (e.g. for self-action refusal) inject
-``current_admin`` as a parameter — FastAPI caches the dependency so it
-runs once per request regardless.
+Mirrors the user-facing ``/controllers/*`` shapes for gateway-scoped
+reads (latest/readings/telemetry) but without the ownership filter, and
+adds the management endpoints (create/patch/delete + pending-controller
+accept/reject + MQTT password generation).
 
-**MQTT credentials are never persisted server-side.** The create-device and
-rotate-mqtt-password endpoints generate a one-shot password, return it in
-the response, and forget it. The admin then runs the printed ``ssh_command``
-on the VPS to register the password with Mosquitto, and flips
-``mqtt_provisioned`` via PATCH /admin/devices/{id} as their own
-bookkeeping. The source of truth is the Mosquitto password file.
+MQTT credentials are still never persisted server-side. The
+create-gateway and rotate endpoints generate a one-shot password,
+return it in the response, and forget it. The admin runs the printed
+``ssh_command`` on the VPS to register it with Mosquitto and flips
+``mqtt_provisioned`` via PATCH /admin/gateways/{id}.
 """
 
 from __future__ import annotations
@@ -35,26 +33,44 @@ from ..auth import (
 )
 from ..config import get_settings
 from ..db import get_db
-from ..models import AuthToken, Device, User
+from ..models import (
+    AuthToken,
+    Controller,
+    Gateway,
+    Node,
+    PendingController,
+    User,
+)
 from ..models import Session as UserSession
 from ..schemas import (
-    CreateDeviceIn,
-    CreateDeviceOut,
+    AcceptPendingControllerIn,
+    ControllerDetailOut,
+    ControllerForGatewayOut,
+    CreateGatewayIn,
+    CreateGatewayOut,
     CreateUserIn,
     CreateUserOut,
-    DeviceAdminOut,
-    DeviceForUserOut,
+    GatewayAdminOut,
+    GatewayDetailAdminOut,
+    GatewayForUserOut,
     InvitationLinkOut,
     OwnerOut,
-    PatchDeviceIn,
-    ReadingOut,
+    PatchControllerIn,
+    PatchGatewayIn,
+    PatchNodeIn,
+    PendingControllerOut,
+    ReadingsPointOut,
     ResetLinkOut,
     RotateMqttOut,
+    TelemetryPointOut,
     UserAdminDetailOut,
     UserAdminOut,
-    reading_to_out,
 )
-from .devices import _fetch_readings, _latest_reading
+from .controllers import (
+    _build_controller_detail,
+    _fetch_controller_readings,
+    _fetch_controller_telemetry,
+)
 
 log = logging.getLogger("admin")
 
@@ -68,10 +84,12 @@ _DEVICE_KEY_RE = re.compile(r"^[a-z0-9_-]+$")
 _ONLINE_WINDOW = timedelta(minutes=5)
 
 
-# --- shape helpers --------------------------------------------------------
+# ===========================================================================
+# Shape helpers
+# ===========================================================================
 
 
-def _user_admin_out(user: User, device_count: int) -> UserAdminOut:
+def _user_admin_out(user: User, gateway_count: int) -> UserAdminOut:
     return UserAdminOut(
         id=user.id,
         email=user.email,
@@ -81,36 +99,53 @@ def _user_admin_out(user: User, device_count: int) -> UserAdminOut:
         last_login_at=user.last_login_at,
         created_at=user.created_at,
         has_password=user.password_hash is not None,
-        device_count=device_count,
+        gateway_count=gateway_count,
     )
 
 
-def _device_for_user_out(device: Device) -> DeviceForUserOut:
-    return DeviceForUserOut(
-        id=device.id,
-        device_key=device.device_key,
-        name=device.name,
-        location=device.location,
-        created_at=device.created_at,
-        last_seen_at=device.last_seen_at,
-        mqtt_provisioned=device.mqtt_provisioned,
+def _owner_out(user: User) -> OwnerOut:
+    return OwnerOut(id=user.id, email=user.email, display_name=user.display_name)
+
+
+def _gateway_admin_out(
+    gateway: Gateway, owner: User, controller_count: int
+) -> GatewayAdminOut:
+    return GatewayAdminOut(
+        id=gateway.id,
+        device_key=gateway.device_key,
+        name=gateway.name,
+        location=gateway.location,
+        mqtt_provisioned=gateway.mqtt_provisioned,
+        created_at=gateway.created_at,
+        last_seen_at=gateway.last_seen_at,
+        owner=_owner_out(owner),
+        controller_count=controller_count,
     )
 
 
-def _device_admin_out(device: Device, owner: User) -> DeviceAdminOut:
-    return DeviceAdminOut(
-        id=device.id,
-        device_key=device.device_key,
-        name=device.name,
-        location=device.location,
-        created_at=device.created_at,
-        last_seen_at=device.last_seen_at,
-        mqtt_provisioned=device.mqtt_provisioned,
-        owner=OwnerOut(id=owner.id, email=owner.email, display_name=owner.display_name),
-    )
+async def _controller_count_for_gateway(
+    db: AsyncSession, gateway_id: int
+) -> int:
+    return (
+        await db.execute(
+            select(sa.func.count(Controller.id)).where(
+                Controller.gateway_id == gateway_id
+            )
+        )
+    ).scalar_one()
 
 
-# --- MQTT helpers ---------------------------------------------------------
+async def _gateway_count_for_user(db: AsyncSession, user_id: int) -> int:
+    return (
+        await db.execute(
+            select(sa.func.count(Gateway.id)).where(Gateway.user_id == user_id)
+        )
+    ).scalar_one()
+
+
+# ===========================================================================
+# MQTT helpers
+# ===========================================================================
 
 
 def _generate_mqtt_password() -> str:
@@ -119,11 +154,7 @@ def _generate_mqtt_password() -> str:
 
 
 def _build_ssh_command(device_key: str, password: str) -> str:
-    """Construct the SSH one-liner the admin runs on the VPS to register the
-    password with Mosquitto. device_key has already passed _DEVICE_KEY_RE so
-    shell-quoting is not a concern; the password is URL-safe alphanumeric +
-    ``-_`` so it also can't break out of the argv slot.
-    """
+    """SSH one-liner the admin runs on the VPS to register the password."""
     resource = get_settings().MOSQUITTO_RESOURCE_NAME
     return (
         f'docker exec $(docker ps --filter "label=coolify.resourceName={resource}" -q) '
@@ -131,16 +162,9 @@ def _build_ssh_command(device_key: str, password: str) -> str:
     )
 
 
-async def _device_count(db: AsyncSession, user_id: int) -> int:
-    count = await db.execute(
-        select(sa.func.count(Device.id)).where(Device.user_id == user_id)
-    )
-    return count.scalar_one()
-
-
-# =========================================================================
+# ===========================================================================
 # USERS
-# =========================================================================
+# ===========================================================================
 
 
 @router.get("/users", response_model=list[UserAdminOut])
@@ -150,11 +174,10 @@ async def list_users(db: AsyncSession = Depends(get_db)) -> list[UserAdminOut]:
         .scalars()
         .all()
     )
-    # N+1 over the device_count subquery is fine at this scale (≤10 users).
     out: list[UserAdminOut] = []
     for user in users:
-        count = await _device_count(db, user.id)
-        out.append(_user_admin_out(user, count))
+        gw_count = await _gateway_count_for_user(db, user.id)
+        out.append(_user_admin_out(user, gw_count))
     return out
 
 
@@ -181,7 +204,7 @@ async def create_user(
         password_hash=None,
     )
     db.add(user)
-    await db.flush()  # populate user.id before inserting the token row
+    await db.flush()
 
     raw, token_hash_value = generate_token()
     db.add(
@@ -200,7 +223,7 @@ async def create_user(
     )
     log.info("admin created user id=%s email=%s; invitation issued", user.id, email)
     return CreateUserOut(
-        user=_user_admin_out(user, device_count=0),
+        user=_user_admin_out(user, gateway_count=0),
         invitation_url=invitation_url,
     )
 
@@ -212,17 +235,34 @@ async def get_user(
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
-    devices = (
-        (
-            await db.execute(
-                select(Device)
-                .where(Device.user_id == user_id)
-                .order_by(Device.created_at.desc())
+
+    gateway_rows = (
+        await db.execute(
+            select(
+                Gateway,
+                sa.func.coalesce(sa.func.count(Controller.id), 0).label("ccnt"),
             )
+            .outerjoin(Controller, Controller.gateway_id == Gateway.id)
+            .where(Gateway.user_id == user_id)
+            .group_by(Gateway.id)
+            .order_by(Gateway.created_at.desc())
         )
-        .scalars()
-        .all()
-    )
+    ).all()
+
+    gateways_out = [
+        GatewayForUserOut(
+            id=g.id,
+            device_key=g.device_key,
+            name=g.name,
+            location=g.location,
+            mqtt_provisioned=g.mqtt_provisioned,
+            created_at=g.created_at,
+            last_seen_at=g.last_seen_at,
+            controller_count=ccnt,
+        )
+        for g, ccnt in gateway_rows
+    ]
+
     return UserAdminDetailOut(
         id=user.id,
         email=user.email,
@@ -232,8 +272,8 @@ async def get_user(
         last_login_at=user.last_login_at,
         created_at=user.created_at,
         has_password=user.password_hash is not None,
-        device_count=len(devices),
-        devices=[_device_for_user_out(d) for d in devices],
+        gateway_count=len(gateways_out),
+        gateways=gateways_out,
     )
 
 
@@ -241,13 +281,6 @@ async def get_user(
 async def resend_invitation(
     user_id: int, db: AsyncSession = Depends(get_db)
 ) -> InvitationLinkOut:
-    """Re-issue an invitation token for a user who hasn't accepted yet.
-
-    Generates a new token; previously-issued ones aren't explicitly
-    invalidated, but the user only needs one valid token to set their
-    password. 400 if the user already has a password set — use the reset
-    flow instead.
-    """
     settings = get_settings()
     user = await db.get(User, user_id)
     if user is None:
@@ -346,228 +379,495 @@ async def delete_user(
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
-    # FK cascades take care of sessions, auth_tokens, devices, readings.
     await db.delete(user)
     await db.commit()
     log.info("admin deleted user id=%s email=%s", user_id, user.email)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# =========================================================================
-# DEVICES
-# =========================================================================
+# ===========================================================================
+# GATEWAYS
+# ===========================================================================
 
 
-@router.get("/devices", response_model=list[DeviceAdminOut])
-async def list_devices(
+@router.get("/gateways", response_model=list[GatewayAdminOut])
+async def list_gateways(
     q: str | None = Query(default=None),
-    device_status: Literal["online", "offline"] | None = Query(
+    gateway_status: Literal["online", "offline"] | None = Query(
         default=None, alias="status"
     ),
     db: AsyncSession = Depends(get_db),
-) -> list[DeviceAdminOut]:
-    stmt = select(Device, User).join(User, Device.user_id == User.id)
+) -> list[GatewayAdminOut]:
+    stmt = (
+        select(
+            Gateway,
+            User,
+            sa.func.coalesce(sa.func.count(Controller.id), 0).label("ccnt"),
+        )
+        .join(User, Gateway.user_id == User.id)
+        .outerjoin(Controller, Controller.gateway_id == Gateway.id)
+        .group_by(Gateway.id, User.id)
+    )
     if q:
         pattern = f"%{q}%"
         stmt = stmt.where(
             or_(
-                Device.device_key.ilike(pattern),
-                Device.name.ilike(pattern),
-                Device.location.ilike(pattern),
+                Gateway.device_key.ilike(pattern),
+                Gateway.name.ilike(pattern),
+                Gateway.location.ilike(pattern),
                 User.email.ilike(pattern),
             )
         )
-    if device_status is not None:
+    if gateway_status is not None:
         threshold = datetime.now(UTC) - _ONLINE_WINDOW
-        if device_status == "online":
-            stmt = stmt.where(Device.last_seen_at >= threshold)
+        if gateway_status == "online":
+            stmt = stmt.where(Gateway.last_seen_at >= threshold)
         else:
             stmt = stmt.where(
-                or_(Device.last_seen_at < threshold, Device.last_seen_at.is_(None))
+                or_(Gateway.last_seen_at < threshold, Gateway.last_seen_at.is_(None))
             )
     stmt = stmt.order_by(
-        Device.last_seen_at.desc().nullslast(),
-        Device.created_at.desc(),
+        Gateway.last_seen_at.desc().nullslast(),
+        Gateway.created_at.desc(),
     )
     rows = (await db.execute(stmt)).all()
-    return [_device_admin_out(device, owner) for device, owner in rows]
+    return [_gateway_admin_out(g, u, ccnt) for g, u, ccnt in rows]
 
 
-@router.get("/devices/{device_id}", response_model=DeviceAdminOut)
-async def get_device(
-    device_id: int, db: AsyncSession = Depends(get_db)
-) -> DeviceAdminOut:
+@router.get("/gateways/{gateway_id}", response_model=GatewayDetailAdminOut)
+async def get_gateway(
+    gateway_id: int, db: AsyncSession = Depends(get_db)
+) -> GatewayDetailAdminOut:
     row = (
         await db.execute(
-            select(Device, User)
-            .join(User, Device.user_id == User.id)
-            .where(Device.id == device_id)
+            select(Gateway, User)
+            .join(User, Gateway.user_id == User.id)
+            .where(Gateway.id == gateway_id)
         )
     ).first()
     if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
-    device, owner = row
-    return _device_admin_out(device, owner)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "gateway not found")
+    gateway, owner = row
+
+    controllers_rows = (
+        await db.execute(
+            select(
+                Controller,
+                sa.func.coalesce(sa.func.count(Node.id), 0).label("ncnt"),
+            )
+            .outerjoin(Node, Node.controller_id == Controller.id)
+            .where(Controller.gateway_id == gateway_id)
+            .group_by(Controller.id)
+            .order_by(Controller.created_at.desc())
+        )
+    ).all()
+    controllers_out = [
+        ControllerForGatewayOut(
+            id=c.id,
+            sn=c.sn,
+            name=c.name,
+            location=c.location,
+            created_at=c.created_at,
+            last_seen_at=c.last_seen_at,
+            node_count=ncnt,
+        )
+        for c, ncnt in controllers_rows
+    ]
+
+    pending = (
+        (
+            await db.execute(
+                select(PendingController)
+                .where(PendingController.gateway_id == gateway_id)
+                .order_by(PendingController.first_seen_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    pending_out = [
+        PendingControllerOut(
+            id=p.id,
+            sn=p.sn,
+            first_seen_at=p.first_seen_at,
+            last_seen_at=p.last_seen_at,
+            message_count=p.message_count,
+        )
+        for p in pending
+    ]
+
+    return GatewayDetailAdminOut(
+        id=gateway.id,
+        device_key=gateway.device_key,
+        name=gateway.name,
+        location=gateway.location,
+        mqtt_provisioned=gateway.mqtt_provisioned,
+        created_at=gateway.created_at,
+        last_seen_at=gateway.last_seen_at,
+        owner=_owner_out(owner),
+        controller_count=len(controllers_out),
+        controllers=controllers_out,
+        pending_controllers=pending_out,
+    )
 
 
 @router.post(
-    "/devices", response_model=CreateDeviceOut, status_code=status.HTTP_201_CREATED
+    "/gateways", response_model=CreateGatewayOut, status_code=status.HTTP_201_CREATED
 )
-async def create_device(
-    payload: CreateDeviceIn, db: AsyncSession = Depends(get_db)
-) -> CreateDeviceOut:
+async def create_gateway(
+    payload: CreateGatewayIn, db: AsyncSession = Depends(get_db)
+) -> CreateGatewayOut:
     if not _DEVICE_KEY_RE.fullmatch(payload.device_key):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "device_key must match ^[a-z0-9_-]+$",
         )
-
     owner = await db.get(User, payload.user_id)
     if owner is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
 
     existing = (
         await db.execute(
-            select(Device).where(Device.device_key == payload.device_key)
+            select(Gateway).where(Gateway.device_key == payload.device_key)
         )
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "device_key already exists")
 
-    device = Device(
+    gateway = Gateway(
         user_id=payload.user_id,
         device_key=payload.device_key,
         name=payload.name,
         location=payload.location,
         mqtt_provisioned=False,
     )
-    db.add(device)
+    db.add(gateway)
     await db.commit()
-    await db.refresh(device)
+    await db.refresh(gateway)
 
     password = _generate_mqtt_password()
     ssh_command = _build_ssh_command(payload.device_key, password)
     log.info(
-        "admin created device id=%s key=%s owner=%s; mqtt password=<redacted>",
-        device.id,
-        device.device_key,
+        "admin created gateway id=%s key=%s owner=%s; mqtt password=<redacted>",
+        gateway.id,
+        gateway.device_key,
         owner.id,
     )
-    return CreateDeviceOut(
-        device=_device_admin_out(device, owner),
+    return CreateGatewayOut(
+        gateway=_gateway_admin_out(gateway, owner, controller_count=0),
         mqtt_password=password,
         ssh_command=ssh_command,
     )
 
 
-@router.patch("/devices/{device_id}", response_model=DeviceAdminOut)
-async def patch_device(
-    device_id: int,
-    payload: PatchDeviceIn,
+@router.patch("/gateways/{gateway_id}", response_model=GatewayAdminOut)
+async def patch_gateway(
+    gateway_id: int,
+    payload: PatchGatewayIn,
     db: AsyncSession = Depends(get_db),
-) -> DeviceAdminOut:
-    device = await db.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+) -> GatewayAdminOut:
+    gateway = await db.get(Gateway, gateway_id)
+    if gateway is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "gateway not found")
 
-    # exclude_unset distinguishes "field omitted" from "field set to null".
     updates = payload.model_dump(exclude_unset=True)
-
     if "name" in updates and updates["name"] is not None:
-        device.name = updates["name"]
+        gateway.name = updates["name"]
     if "location" in updates:
-        # location is nullable: explicit None means "clear it".
-        device.location = updates["location"]
+        gateway.location = updates["location"]
     if "mqtt_provisioned" in updates and updates["mqtt_provisioned"] is not None:
-        device.mqtt_provisioned = updates["mqtt_provisioned"]
+        gateway.mqtt_provisioned = updates["mqtt_provisioned"]
     if "user_id" in updates and updates["user_id"] is not None:
         new_owner = await db.get(User, updates["user_id"])
         if new_owner is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "user_id not found")
-        device.user_id = updates["user_id"]
+        gateway.user_id = updates["user_id"]
 
     await db.commit()
-    await db.refresh(device)
+    await db.refresh(gateway)
 
-    owner = await db.get(User, device.user_id)
-    assert owner is not None  # FK guarantees this; assert silences type checker
+    owner = await db.get(User, gateway.user_id)
+    assert owner is not None
+    ccnt = await _controller_count_for_gateway(db, gateway.id)
     log.info(
-        "admin patched device id=%s fields=%s", device_id, sorted(updates.keys())
+        "admin patched gateway id=%s fields=%s", gateway_id, sorted(updates.keys())
     )
-    return _device_admin_out(device, owner)
+    return _gateway_admin_out(gateway, owner, ccnt)
 
 
 @router.post(
-    "/devices/{device_id}/rotate-mqtt-password", response_model=RotateMqttOut
+    "/gateways/{gateway_id}/rotate-mqtt-password", response_model=RotateMqttOut
 )
 async def rotate_mqtt_password(
-    device_id: int, db: AsyncSession = Depends(get_db)
+    gateway_id: int, db: AsyncSession = Depends(get_db)
 ) -> RotateMqttOut:
-    device = await db.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
+    gateway = await db.get(Gateway, gateway_id)
+    if gateway is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "gateway not found")
 
     password = _generate_mqtt_password()
-    # New password not yet pushed to Mosquitto; reset the flag.
-    device.mqtt_provisioned = False
+    gateway.mqtt_provisioned = False
     await db.commit()
 
-    ssh_command = _build_ssh_command(device.device_key, password)
+    ssh_command = _build_ssh_command(gateway.device_key, password)
     log.info(
-        "admin rotated MQTT password for device id=%s key=%s; password=<redacted>",
-        device.id,
-        device.device_key,
+        "admin rotated MQTT password for gateway id=%s key=%s; password=<redacted>",
+        gateway.id,
+        gateway.device_key,
     )
     return RotateMqttOut(mqtt_password=password, ssh_command=ssh_command)
 
 
-async def _admin_device_or_404(db: AsyncSession, device_id: int) -> Device:
-    """Existence check without ownership filter — for admin-only readings paths."""
-    device = await db.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
-    return device
+@router.delete("/gateways/{gateway_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_gateway(
+    gateway_id: int, db: AsyncSession = Depends(get_db)
+) -> Response:
+    gateway = await db.get(Gateway, gateway_id)
+    if gateway is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "gateway not found")
+    # Cascade drops controllers → nodes → node_readings, plus pending_controllers
+    # and controller_telemetry chains.
+    await db.delete(gateway)
+    await db.commit()
+    log.info("admin deleted gateway id=%s key=%s", gateway_id, gateway.device_key)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# PENDING CONTROLLERS
+# ===========================================================================
+
+
+@router.post(
+    "/pending-controllers/{pending_id}/accept",
+    response_model=ControllerForGatewayOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def accept_pending_controller(
+    pending_id: int,
+    payload: AcceptPendingControllerIn,
+    db: AsyncSession = Depends(get_db),
+) -> ControllerForGatewayOut:
+    pending = await db.get(PendingController, pending_id)
+    if pending is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "pending controller not found"
+        )
+
+    # Race-condition guard: it's possible an admin previously accepted a
+    # controller with this (gateway_id, sn). Reject the duplicate.
+    existing = (
+        await db.execute(
+            select(Controller).where(
+                Controller.gateway_id == pending.gateway_id,
+                Controller.sn == pending.sn,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "controller with this (gateway, sn) already exists",
+        )
+
+    controller = Controller(
+        gateway_id=pending.gateway_id,
+        sn=pending.sn,
+        name=payload.name,
+        location=payload.location,
+    )
+    db.add(controller)
+    await db.flush()
+    await db.delete(pending)
+    await db.commit()
+    await db.refresh(controller)
+
+    log.info(
+        "admin accepted pending controller id=%s sn=%s gateway=%s as controller id=%s",
+        pending_id,
+        pending.sn,
+        pending.gateway_id,
+        controller.id,
+    )
+    return ControllerForGatewayOut(
+        id=controller.id,
+        sn=controller.sn,
+        name=controller.name,
+        location=controller.location,
+        created_at=controller.created_at,
+        last_seen_at=controller.last_seen_at,
+        node_count=0,
+    )
+
+
+@router.post(
+    "/pending-controllers/{pending_id}/reject",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def reject_pending_controller(
+    pending_id: int, db: AsyncSession = Depends(get_db)
+) -> Response:
+    pending = await db.get(PendingController, pending_id)
+    if pending is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "pending controller not found"
+        )
+    await db.delete(pending)
+    await db.commit()
+    log.info(
+        "admin rejected pending controller id=%s sn=%s gateway=%s",
+        pending_id,
+        pending.sn,
+        pending.gateway_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# CONTROLLERS (admin)
+# ===========================================================================
+
+
+@router.get("/controllers/{controller_id}", response_model=ControllerDetailOut)
+async def admin_get_controller(
+    controller_id: int, db: AsyncSession = Depends(get_db)
+) -> ControllerDetailOut:
+    return await _build_controller_detail(db, controller_id)
+
+
+@router.patch("/controllers/{controller_id}", response_model=ControllerDetailOut)
+async def patch_controller(
+    controller_id: int,
+    payload: PatchControllerIn,
+    db: AsyncSession = Depends(get_db),
+) -> ControllerDetailOut:
+    controller = await db.get(Controller, controller_id)
+    if controller is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "controller not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates and updates["name"] is not None:
+        controller.name = updates["name"]
+    if "location" in updates:
+        controller.location = updates["location"]
+
+    await db.commit()
+    log.info(
+        "admin patched controller id=%s fields=%s",
+        controller_id,
+        sorted(updates.keys()),
+    )
+    return await _build_controller_detail(db, controller_id)
+
+
+@router.delete(
+    "/controllers/{controller_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_controller(
+    controller_id: int, db: AsyncSession = Depends(get_db)
+) -> Response:
+    controller = await db.get(Controller, controller_id)
+    if controller is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "controller not found")
+    await db.delete(controller)
+    await db.commit()
+    log.info("admin deleted controller id=%s sn=%s", controller_id, controller.sn)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
-    "/devices/{device_id}/readings/latest",
-    response_model=ReadingOut,
-    responses={204: {"description": "device has no readings yet"}},
+    "/controllers/{controller_id}/readings",
+    response_model=list[ReadingsPointOut],
 )
-async def admin_get_latest_reading(
-    device_id: int, db: AsyncSession = Depends(get_db)
-) -> ReadingOut | Response:
-    await _admin_device_or_404(db, device_id)
-    latest = await _latest_reading(db, device_id)
-    if latest is None:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    return reading_to_out(latest)
-
-
-@router.get(
-    "/devices/{device_id}/readings", response_model=list[ReadingOut]
-)
-async def admin_get_device_readings(
-    device_id: int,
+async def admin_get_controller_readings(
+    controller_id: int,
     from_: datetime = Query(..., alias="from"),
-    to: datetime = Query(...),
+    to: datetime | None = Query(default=None),
     bucket: str | None = Query(default=None),
     limit: int = Query(default=1000, ge=1, le=10000),
     db: AsyncSession = Depends(get_db),
-) -> list[ReadingOut]:
-    await _admin_device_or_404(db, device_id)
-    return await _fetch_readings(db, device_id, from_, to, bucket, limit)
+) -> list[ReadingsPointOut]:
+    # Existence check via _build_controller_detail's first SELECT would
+    # be heavier than needed; a cheap db.get suffices.
+    controller = await db.get(Controller, controller_id)
+    if controller is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "controller not found")
+    return await _fetch_controller_readings(
+        db, controller_id, from_, to or datetime.now(UTC), bucket, limit
+    )
 
 
-@router.delete("/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_device(
-    device_id: int, db: AsyncSession = Depends(get_db)
-) -> Response:
-    device = await db.get(Device, device_id)
-    if device is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
-    # FK cascade drops the device's readings.
-    await db.delete(device)
+@router.get(
+    "/controllers/{controller_id}/telemetry",
+    response_model=list[TelemetryPointOut],
+)
+async def admin_get_controller_telemetry(
+    controller_id: int,
+    from_: datetime = Query(..., alias="from"),
+    to: datetime | None = Query(default=None),
+    bucket: str | None = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=10000),
+    db: AsyncSession = Depends(get_db),
+) -> list[TelemetryPointOut]:
+    controller = await db.get(Controller, controller_id)
+    if controller is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "controller not found")
+    return await _fetch_controller_telemetry(
+        db, controller_id, from_, to or datetime.now(UTC), bucket, limit
+    )
+
+
+# ===========================================================================
+# NODES (admin)
+# ===========================================================================
+
+
+@router.patch("/nodes/{node_id}", status_code=status.HTTP_200_OK)
+async def patch_node(
+    node_id: int,
+    payload: PatchNodeIn,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Update node ``name`` and/or ``has_lux``.
+
+    Per the design decision: flipping ``has_lux`` from True to False does
+    NOT bulk-update existing rows — only NEW readings discard lux.
+    """
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "node not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        # Nullable: explicit None clears the name.
+        node.name = updates["name"]
+    if "has_lux" in updates and updates["has_lux"] is not None:
+        node.has_lux = updates["has_lux"]
+
     await db.commit()
-    log.info("admin deleted device id=%s key=%s", device_id, device.device_key)
+    await db.refresh(node)
+    log.info("admin patched node id=%s fields=%s", node_id, sorted(updates.keys()))
+    return {
+        "id": node.id,
+        "node_index": node.node_index,
+        "name": node.name,
+        "has_lux": node.has_lux,
+        "last_seen_at": (
+            node.last_seen_at.isoformat() if node.last_seen_at is not None else None
+        ),
+    }
+
+
+@router.delete("/nodes/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_node(
+    node_id: int, db: AsyncSession = Depends(get_db)
+) -> Response:
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "node not found")
+    await db.delete(node)
+    await db.commit()
+    log.info(
+        "admin deleted node id=%s controller=%s", node_id, node.controller_id
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
