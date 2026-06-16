@@ -200,6 +200,11 @@ async def _fetch_controller_readings(
         )
     else:
         interval_str = _parse_bucket(bucket)
+        # GROUP BY / ORDER BY must repeat the full time_bucket() expression,
+        # NOT the output alias `time`. An unqualified `GROUP BY time` is
+        # ambiguous and PostgreSQL resolves it to the *input* column
+        # (node_readings.time), which groups by raw timestamp — defeating the
+        # bucketing and returning one row per reading instead of one per bucket.
         sql = text(
             f"""
             SELECT time_bucket('{interval_str}'::interval, nr.time) AS time,
@@ -208,8 +213,8 @@ async def _fetch_controller_readings(
             JOIN nodes n ON n.id = nr.node_id
             WHERE n.controller_id = :cid
               AND nr.time >= :from_time AND nr.time < :to_time
-            GROUP BY time
-            ORDER BY time ASC
+            GROUP BY time_bucket('{interval_str}'::interval, nr.time)
+            ORDER BY time_bucket('{interval_str}'::interval, nr.time) ASC
             LIMIT :limit
             """
         )
@@ -261,6 +266,10 @@ async def _fetch_controller_telemetry(
         )
     else:
         interval_str = _parse_bucket(bucket)
+        # Repeat the full time_bucket() expression in GROUP BY / ORDER BY.
+        # An unqualified `GROUP BY time` is ambiguous between the output alias
+        # and controller_telemetry.time; PostgreSQL picks the input column,
+        # which groups by raw timestamp and skips the bucketing entirely.
         sql = text(
             f"""
             SELECT time_bucket('{interval_str}'::interval, time) AS time,
@@ -269,8 +278,8 @@ async def _fetch_controller_telemetry(
             FROM controller_telemetry
             WHERE controller_id = :cid
               AND time >= :from_time AND time < :to_time
-            GROUP BY time
-            ORDER BY time ASC
+            GROUP BY time_bucket('{interval_str}'::interval, time)
+            ORDER BY time_bucket('{interval_str}'::interval, time) ASC
             LIMIT :limit
             """
         )
