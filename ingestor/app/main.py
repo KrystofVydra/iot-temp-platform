@@ -14,26 +14,40 @@ Nodes are auto-created on first sight (the admin can rename them later);
 the ``has_lux`` flag is captured at creation time from whether the first
 message carried a lux value.
 
+Round 4 (Phase 4B) adds notification evaluation:
+  * Per-message (value-based) evaluation runs inside ``_handle_message``
+    after the readings commit, in a try/except so a detector bug can't
+    stop ingestion.
+  * A background ``_time_based_loop`` task ticks every 30 seconds for
+    stale-condition kinds (offline gateways/controllers, long door opens,
+    drift TTLs).
+
 Run with ``python -m app.main``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime
 
 import aiomqtt
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .config import get_settings
 from .db import get_session_factory
+from .detector import evaluate_time_based, evaluate_value_based
 from .models import Controller, ControllerTelemetry, Gateway, Node, NodeReading
 from .schemas import IncomingTelemetry
 
 log = logging.getLogger("ingestor")
+
+# Time-based detector cadence. Picked deliberately small so the bell badge
+# is reasonably responsive without hammering the DB.
+_TIME_BASED_INTERVAL_SECONDS = 30
 
 
 async def _record_pending_controller(
@@ -187,6 +201,40 @@ async def _handle_message(topic: str, payload_bytes: bytes) -> None:
             log_fields.append(f"err={err}")
         log.info("stored reading %s", " ".join(log_fields))
 
+        # 7. Detector — evaluate notifications. Wrapped so a detector bug
+        # can never break ingestion of the next message.
+        try:
+            await evaluate_value_based(session, gateway, controller, node, payload, now)
+            await session.commit()
+        except Exception:
+            log.exception("detector evaluate_value_based failed")
+            await session.rollback()
+
+
+async def _time_based_loop(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Background task: scan for stale conditions every 30 seconds."""
+    while True:
+        try:
+            await asyncio.sleep(_TIME_BASED_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            log.info("time-based detector loop cancelled")
+            return
+        try:
+            async with session_factory() as session:
+                now = datetime.now(UTC)
+                try:
+                    await evaluate_time_based(session, now)
+                    await session.commit()
+                except Exception:
+                    log.exception("detector evaluate_time_based failed")
+                    await session.rollback()
+        except Exception:
+            # Belt-and-braces: even session-factory failures shouldn't kill
+            # the loop. The next tick will retry.
+            log.exception("time-based detector tick failed")
+
 
 async def run() -> None:
     settings = get_settings()
@@ -200,29 +248,40 @@ async def run() -> None:
         settings.MQTT_PORT,
         settings.MQTT_TOPIC,
     )
-    while True:
-        try:
-            async with aiomqtt.Client(
-                hostname=settings.MQTT_HOST,
-                port=settings.MQTT_PORT,
-                username=settings.MQTT_USERNAME,
-                password=settings.MQTT_PASSWORD,
-            ) as client:
-                await client.subscribe(settings.MQTT_TOPIC)
-                log.info("subscribed, waiting for messages")
-                async for message in client.messages:
-                    # Retained messages are replayed by the broker on every
-                    # (re)subscribe; ingesting them stamps stale telemetry with
-                    # a fresh "now" and falsely keeps devices "online".
-                    if message.retain:
-                        log.info(
-                            "ignoring retained message on %s", str(message.topic)
-                        )
-                        continue
-                    await _handle_message(str(message.topic), bytes(message.payload))
-        except aiomqtt.MqttError as exc:
-            log.error("mqtt error: %s — reconnecting in 5s", exc)
-            await asyncio.sleep(5)
+
+    session_factory = get_session_factory()
+    time_task = asyncio.create_task(
+        _time_based_loop(session_factory), name="time-based-detector"
+    )
+
+    try:
+        while True:
+            try:
+                async with aiomqtt.Client(
+                    hostname=settings.MQTT_HOST,
+                    port=settings.MQTT_PORT,
+                    username=settings.MQTT_USERNAME,
+                    password=settings.MQTT_PASSWORD,
+                ) as client:
+                    await client.subscribe(settings.MQTT_TOPIC)
+                    log.info("subscribed, waiting for messages")
+                    async for message in client.messages:
+                        # Retained messages are replayed by the broker on every
+                        # (re)subscribe; ingesting them stamps stale telemetry with
+                        # a fresh "now" and falsely keeps devices "online".
+                        if message.retain:
+                            log.info(
+                                "ignoring retained message on %s", str(message.topic)
+                            )
+                            continue
+                        await _handle_message(str(message.topic), bytes(message.payload))
+            except aiomqtt.MqttError as exc:
+                log.error("mqtt error: %s — reconnecting in 5s", exc)
+                await asyncio.sleep(5)
+    finally:
+        time_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await time_task
 
 
 if __name__ == "__main__":
