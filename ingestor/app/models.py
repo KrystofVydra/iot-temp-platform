@@ -17,10 +17,11 @@ from sqlalchemy import (
     Integer,
     SmallInteger,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -52,6 +53,12 @@ class User(Base):
 
     gateways: Mapped[list[Gateway]] = relationship(
         "Gateway", back_populates="user"
+    )
+    notification_settings: Mapped[list[NotificationSetting]] = relationship(
+        "NotificationSetting", back_populates="user", cascade="all, delete-orphan"
+    )
+    notifications: Mapped[list[Notification]] = relationship(
+        "Notification", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -233,3 +240,101 @@ class ControllerTelemetry(Base):
             text("time DESC"),
         ),
     )
+
+
+class NotificationKindDefault(Base):
+    __tablename__ = "notification_kind_defaults"
+
+    kind: Mapped[str] = mapped_column(String(50), primary_key=True)
+    severity: Mapped[str] = mapped_column(String(10), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    enabled_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    thresholds: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    description: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("''")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class NotificationSetting(Base):
+    __tablename__ = "notification_settings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(
+        String(50),
+        ForeignKey("notification_kind_defaults.kind", ondelete="CASCADE"),
+        nullable=False,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    thresholds: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="notification_settings")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "kind", name="uq_notification_settings_user_kind"),
+    )
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(
+        String(50),
+        ForeignKey("notification_kind_defaults.kind", ondelete="CASCADE"),
+        nullable=False,
+    )
+    severity: Mapped[str] = mapped_column(String(10), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    gateway_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("gateways.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    controller_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("controllers.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    node_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("nodes.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    subject_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    details: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    opened_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="notifications")

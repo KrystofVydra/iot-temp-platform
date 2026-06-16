@@ -38,10 +38,13 @@ from ..models import (
     Controller,
     Gateway,
     Node,
+    Notification,
+    NotificationKindDefault,
     PendingController,
     User,
 )
 from ..models import Session as UserSession
+from ..notification_messages import build_summary
 from ..schemas import (
     AcceptPendingControllerIn,
     ControllerDetailOut,
@@ -54,9 +57,12 @@ from ..schemas import (
     GatewayDetailAdminOut,
     GatewayForUserOut,
     InvitationLinkOut,
+    NotificationKindDefaultOut,
+    NotificationOut,
     OwnerOut,
     PatchControllerIn,
     PatchGatewayIn,
+    PatchKindDefaultIn,
     PatchNodeIn,
     PendingControllerOut,
     ReadingsPointOut,
@@ -71,6 +77,7 @@ from .controllers import (
     _fetch_controller_readings,
     _fetch_controller_telemetry,
 )
+from .notifications import _validate_thresholds
 
 log = logging.getLogger("admin")
 
@@ -215,6 +222,21 @@ async def create_user(
             expires_at=datetime.now(UTC) + INVITATION_TOKEN_TTL,
         )
     )
+
+    # Auto-provision the user's notification settings from the global
+    # defaults. Round 4 backfill seeded existing users; this keeps newly
+    # created users in the same shape.
+    await db.execute(
+        sa.text(
+            """
+            INSERT INTO notification_settings (user_id, kind, enabled, thresholds)
+            SELECT :uid, d.kind, d.enabled_default, d.thresholds
+            FROM notification_kind_defaults d
+            """
+        ),
+        {"uid": user.id},
+    )
+
     await db.commit()
     await db.refresh(user)
 
@@ -871,3 +893,122 @@ async def delete_node(
         "admin deleted node id=%s controller=%s", node_id, node.controller_id
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ===========================================================================
+# NOTIFICATIONS — global defaults + cross-user log
+# ===========================================================================
+
+
+@router.get(
+    "/notification-defaults", response_model=list[NotificationKindDefaultOut]
+)
+async def list_kind_defaults(
+    db: AsyncSession = Depends(get_db),
+) -> list[NotificationKindDefaultOut]:
+    rows = (
+        (
+            await db.execute(
+                select(NotificationKindDefault).order_by(
+                    NotificationKindDefault.kind.asc()
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        NotificationKindDefaultOut(
+            kind=r.kind,
+            severity=r.severity,
+            scope=r.scope,
+            enabled_default=r.enabled_default,
+            thresholds=dict(r.thresholds or {}),
+            description=r.description,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+
+
+@router.patch(
+    "/notification-defaults/{kind}", response_model=NotificationKindDefaultOut
+)
+async def patch_kind_default(
+    kind: str,
+    payload: PatchKindDefaultIn,
+    db: AsyncSession = Depends(get_db),
+) -> NotificationKindDefaultOut:
+    """Update the global defaults for one kind.
+
+    Note: this does NOT cascade to existing users' notification_settings rows
+    — they keep their customised values. New users (and existing users that
+    haven't customised a particular kind) get the new defaults next time
+    they're provisioned.
+    """
+    row = await db.get(NotificationKindDefault, kind)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown notification kind")
+
+    if payload.enabled_default is not None:
+        row.enabled_default = payload.enabled_default
+    if payload.thresholds is not None:
+        row.thresholds = _validate_thresholds(
+            kind, payload.thresholds, set(row.thresholds or {})
+        )
+    row.updated_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(row)
+    log.info("admin updated notification defaults kind=%s", kind)
+    return NotificationKindDefaultOut(
+        kind=row.kind,
+        severity=row.severity,
+        scope=row.scope,
+        enabled_default=row.enabled_default,
+        thresholds=dict(row.thresholds or {}),
+        description=row.description,
+        updated_at=row.updated_at,
+    )
+
+
+@router.get("/notifications", response_model=list[NotificationOut])
+async def admin_list_notifications(
+    user_id: int | None = Query(default=None),
+    status_filter: Literal["active", "all", "resolved"] = Query(
+        default="all", alias="status"
+    ),
+    kind: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+) -> list[NotificationOut]:
+    """Cross-user notification log. Same filters as the user view minus the
+    user scope (admin can target a specific user with ?user_id=)."""
+    stmt = select(Notification)
+    if user_id is not None:
+        stmt = stmt.where(Notification.user_id == user_id)
+    if status_filter == "active":
+        stmt = stmt.where(Notification.resolved_at.is_(None))
+    elif status_filter == "resolved":
+        stmt = stmt.where(Notification.resolved_at.is_not(None))
+    if kind is not None:
+        stmt = stmt.where(Notification.kind == kind)
+    stmt = stmt.order_by(Notification.opened_at.desc()).limit(limit)
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        NotificationOut(
+            id=n.id,
+            kind=n.kind,
+            severity=n.severity,
+            scope=n.scope,
+            gateway_id=n.gateway_id,
+            controller_id=n.controller_id,
+            node_id=n.node_id,
+            subject_name=n.subject_name,
+            details=dict(n.details or {}),
+            opened_at=n.opened_at,
+            resolved_at=n.resolved_at,
+            read_at=n.read_at,
+            summary=build_summary(n.kind, n.subject_name, n.details),
+        )
+        for n in rows
+    ]

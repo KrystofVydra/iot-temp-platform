@@ -15,6 +15,7 @@ The schemas fall into three groups:
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr
 
@@ -273,3 +274,76 @@ class PatchNodeIn(BaseModel):
 
     name: str | None = None
     has_lux: bool | None = None
+
+
+# ===========================================================================
+# Notification settings + log (Round 4)
+# ===========================================================================
+
+
+Severity = Literal["critical", "alert"]
+Scope = Literal["gateway", "controller", "node"]
+
+
+class NotificationKindDefaultOut(BaseModel):
+    """One row in the global kind catalogue (admin-editable)."""
+
+    kind: str
+    severity: Severity
+    scope: Scope
+    enabled_default: bool
+    thresholds: dict[str, float]
+    description: str
+    updated_at: datetime
+
+
+class PatchKindDefaultIn(BaseModel):
+    """PATCH /admin/notification-defaults/{kind}."""
+
+    enabled_default: bool | None = None
+    thresholds: dict[str, float] | None = None
+
+
+class NotificationSettingOut(BaseModel):
+    """One row in GET /me/notifications/settings — joined with kind defaults."""
+
+    kind: str
+    severity: Severity
+    scope: Scope
+    enabled: bool
+    thresholds: dict[str, float]
+    description: str
+
+
+class PatchNotificationSettingIn(BaseModel):
+    """PATCH /me/notifications/settings/{kind}."""
+
+    enabled: bool | None = None
+    thresholds: dict[str, float] | None = None
+
+
+class NotificationOut(BaseModel):
+    """One row in the notification list. ``summary`` is server-rendered."""
+
+    id: int
+    kind: str
+    severity: Severity
+    scope: Scope
+    gateway_id: int | None
+    controller_id: int | None
+    node_id: int | None
+    subject_name: str | None
+    details: dict[str, Any]
+    opened_at: datetime
+    resolved_at: datetime | None
+    read_at: datetime | None
+    summary: str
+
+
+class NotificationListOut(BaseModel):
+    """GET /me/notifications response envelope."""
+
+    notifications: list[NotificationOut]
+    total: int
+    unread: int
+    active: int

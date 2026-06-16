@@ -9,10 +9,13 @@ import { Dashboard } from './pages/Dashboard';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { Login } from './pages/Login';
 import { NotFound } from './pages/NotFound';
+import { Notifications } from './pages/Notifications';
+import { NotificationSettings } from './pages/NotificationSettings';
 import { SetPassword } from './pages/SetPassword';
 import { AdminControllerDetail } from './pages/admin/AdminControllerDetail';
 import { AdminGatewayDetail } from './pages/admin/AdminGatewayDetail';
 import { AdminGateways } from './pages/admin/AdminGateways';
+import { AdminNotificationDefaults } from './pages/admin/AdminNotificationDefaults';
 import { AdminUserDetail } from './pages/admin/AdminUserDetail';
 import { AdminUsers } from './pages/admin/AdminUsers';
 
@@ -66,6 +69,11 @@ function App() {
             >
               <Route path="/" element={<Dashboard />} />
               <Route path="/controllers/:id" element={<ControllerDetail />} />
+              <Route path="/notifications" element={<Notifications />} />
+              <Route
+                path="/settings/notifications"
+                element={<NotificationSettings />}
+              />
               <Route
                 path="/admin"
                 element={
@@ -82,6 +90,10 @@ function App() {
                 <Route
                   path="controllers/:id"
                   element={<AdminControllerDetail />}
+                />
+                <Route
+                  path="notification-defaults"
+                  element={<AdminNotificationDefaults />}
                 />
               </Route>
             </Route>

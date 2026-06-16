@@ -194,3 +194,64 @@ export type NodePatch = Partial<{
   name: string;
   has_lux: boolean;
 }>;
+
+// ===========================================================================
+// Notifications (Round 4)
+// ===========================================================================
+
+export type NotificationSeverity = 'critical' | 'alert';
+export type NotificationScope = 'gateway' | 'controller' | 'node';
+
+export interface NotificationSetting {
+  kind: string;
+  severity: NotificationSeverity;
+  scope: NotificationScope;
+  enabled: boolean;
+  thresholds: Record<string, number>;
+  description: string;
+}
+
+export interface Notification {
+  id: number;
+  kind: string;
+  severity: NotificationSeverity;
+  scope: NotificationScope;
+  gateway_id: number | null;
+  controller_id: number | null;
+  node_id: number | null;
+  subject_name: string | null;
+  details: Record<string, unknown>;
+  opened_at: string;
+  resolved_at: string | null;
+  read_at: string | null;
+  summary: string;
+}
+
+export interface NotificationListResponse {
+  notifications: Notification[];
+  total: number;
+  unread: number;
+  active: number;
+}
+
+export interface KindDefault {
+  kind: string;
+  severity: NotificationSeverity;
+  scope: NotificationScope;
+  enabled_default: boolean;
+  thresholds: Record<string, number>;
+  description: string;
+  updated_at: string;
+}
+
+export type NotificationStatusFilter = 'active' | 'all' | 'resolved';
+
+export type NotificationSettingPatch = Partial<{
+  enabled: boolean;
+  thresholds: Record<string, number>;
+}>;
+
+export type KindDefaultPatch = Partial<{
+  enabled_default: boolean;
+  thresholds: Record<string, number>;
+}>;

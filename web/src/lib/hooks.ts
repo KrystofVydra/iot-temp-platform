@@ -11,6 +11,13 @@ import type {
   GatewayDetailAdmin,
   GatewayPatch,
   InvitationLinkResponse,
+  KindDefault,
+  KindDefaultPatch,
+  Notification,
+  NotificationListResponse,
+  NotificationSetting,
+  NotificationSettingPatch,
+  NotificationStatusFilter,
   NodePatch,
   ReadingPoint,
   ResetLinkResponse,
@@ -406,5 +413,144 @@ export function useDeleteNode() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['admin', 'controllers'] });
     },
+  });
+}
+
+// ===========================================================================
+// Notifications (Round 4)
+// ===========================================================================
+
+export function useMyNotificationSettings() {
+  return useQuery({
+    queryKey: ['me', 'notifications', 'settings'],
+    queryFn: () =>
+      apiFetch<NotificationSetting[]>('/me/notifications/settings'),
+  });
+}
+
+export function useUpdateMyNotificationSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      kind,
+      patch,
+    }: {
+      kind: string;
+      patch: NotificationSettingPatch;
+    }) =>
+      apiFetch<NotificationSetting>(`/me/notifications/settings/${kind}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['me', 'notifications', 'settings'] });
+    },
+  });
+}
+
+export function useMyNotifications(filter: {
+  status?: NotificationStatusFilter;
+  kind?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (filter.status) params.set('status', filter.status);
+  if (filter.kind) params.set('kind', filter.kind);
+  if (filter.limit) params.set('limit', String(filter.limit));
+  const qs = params.toString();
+  return useQuery({
+    queryKey: [
+      'me',
+      'notifications',
+      {
+        status: filter.status ?? '',
+        kind: filter.kind ?? '',
+        limit: filter.limit ?? 0,
+      },
+    ],
+    queryFn: () =>
+      apiFetch<NotificationListResponse>(
+        `/me/notifications${qs ? `?${qs}` : ''}`,
+      ),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useUnreadCount() {
+  return useQuery({
+    queryKey: ['me', 'notifications', 'unread-count'],
+    queryFn: () => apiFetch<{ count: number }>('/me/notifications/unread-count'),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useMarkRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      apiFetch<void>(`/me/notifications/${id}/read`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['me', 'notifications'] });
+    },
+  });
+}
+
+export function useMarkAllRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<void>('/me/notifications/mark-all-read', { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['me', 'notifications'] });
+    },
+  });
+}
+
+// ----- admin -----
+
+export function useAdminKindDefaults() {
+  return useQuery({
+    queryKey: ['admin', 'notification-defaults'],
+    queryFn: () =>
+      apiFetch<KindDefault[]>('/admin/notification-defaults'),
+  });
+}
+
+export function useAdminUpdateKindDefault() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, patch }: { kind: string; patch: KindDefaultPatch }) =>
+      apiFetch<KindDefault>(`/admin/notification-defaults/${kind}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'notification-defaults'] });
+    },
+  });
+}
+
+export function useAdminNotifications(filter: {
+  user_id?: number;
+  status?: NotificationStatusFilter;
+  kind?: string;
+}) {
+  const params = new URLSearchParams();
+  if (filter.user_id !== undefined) params.set('user_id', String(filter.user_id));
+  if (filter.status) params.set('status', filter.status);
+  if (filter.kind) params.set('kind', filter.kind);
+  const qs = params.toString();
+  return useQuery({
+    queryKey: [
+      'admin',
+      'notifications',
+      {
+        user_id: filter.user_id ?? null,
+        status: filter.status ?? '',
+        kind: filter.kind ?? '',
+      },
+    ],
+    queryFn: () =>
+      apiFetch<Notification[]>(`/admin/notifications${qs ? `?${qs}` : ''}`),
   });
 }
