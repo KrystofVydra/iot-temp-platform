@@ -109,7 +109,7 @@ class ControllerLatest(BaseModel):
 
     time: datetime | None
     temperature_avg: float | None
-    battery_v: float | None
+    battery_pct: int | None
     door_open: bool | None
     any_node_error: bool
 
@@ -145,7 +145,7 @@ class NodeOut(BaseModel):
 
 class LatestTelemetry(BaseModel):
     time: datetime | None
-    battery_v: float | None
+    battery_pct: int | None
     door_open: bool | None
 
 
@@ -172,7 +172,7 @@ class TelemetryPointOut(BaseModel):
     """Single time-bucket of controller battery + door state."""
 
     time: datetime
-    battery_v: float | None
+    battery_pct: int | None
     door_open: bool | None
 
 

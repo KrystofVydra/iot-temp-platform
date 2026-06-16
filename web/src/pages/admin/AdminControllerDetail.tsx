@@ -190,8 +190,8 @@ export function AdminControllerDetail() {
           <div>
             <div className="text-xs text-gray-400">Battery</div>
             <div>
-              {latestTel.battery_v !== null
-                ? `${latestTel.battery_v.toFixed(2)} V`
+              {latestTel.battery_pct !== null
+                ? `${latestTel.battery_pct}%`
                 : '—'}
             </div>
           </div>

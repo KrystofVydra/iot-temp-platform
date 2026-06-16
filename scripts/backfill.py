@@ -10,8 +10,9 @@ because we delete existing rows in [start, end) before insertion.
 Temperatures follow a slow diurnal cycle around ~4 °C with door-open spikes;
 per-node offsets simulate physical placement (node 1 near the door is
 slightly warmer; higher node_index → slightly colder). Battery drifts from
-3.6 V down to ~3.2 V over the window with light noise. Door events come in
-short bursts (1-3 min, ~every 4 h) plus a handful of long opens.
+100 % down to ~80 % over the window (integer percent, clamped 0..100) with
+light noise. Door events come in short bursts (1-3 min, ~every 4 h) plus a
+handful of long opens.
 
 Usage:
     DATABASE_URL=postgresql+asyncpg://iot:pass@host:5432/iot \\
@@ -60,10 +61,10 @@ DOOR_SPIKE_RANGE = (2.0, 5.0)            # °C above baseline at peak
 DOOR_RECOVERY_MIN = 10                   # how long after close the spike fully decays
 DOOR_DECAY_PER_MIN = 0.18                # exponential decay factor
 
-# Battery drift over the full window.
-BATTERY_START_V = 3.6
-BATTERY_END_V = 3.2
-BATTERY_NOISE_SIGMA = 0.005
+# Battery drift over the full window (integer percent).
+BATTERY_START_PCT = 100
+BATTERY_END_PCT = 80
+BATTERY_NOISE_SIGMA = 2.0
 
 # Lux model (only for has_lux nodes). Day/night sin² curve.
 LUX_PEAK = 600
@@ -288,18 +289,19 @@ def _generate_telemetry(
 ) -> list[tuple]:
     """Return rows ready for COPY into controller_telemetry.
 
-    Tuple order: (time, controller_id, battery_v, door_open).
+    Tuple order: (time, controller_id, battery_pct, door_open).
     """
     total = len(timestamps)
     rows: list[tuple] = []
     for i, ts in enumerate(timestamps):
         frac = i / max(1, total - 1)
-        battery = (
-            BATTERY_START_V
-            - (BATTERY_START_V - BATTERY_END_V) * frac
+        pct = (
+            BATTERY_START_PCT
+            - (BATTERY_START_PCT - BATTERY_END_PCT) * frac
             + random.gauss(0, BATTERY_NOISE_SIGMA)
         )
-        rows.append((ts, controller_id, round(battery, 3), door_open[i]))
+        pct = max(0, min(100, round(pct)))
+        rows.append((ts, controller_id, pct, door_open[i]))
     return rows
 
 
@@ -507,7 +509,7 @@ async def main() -> None:
             await conn.copy_records_to_table(
                 "controller_telemetry",
                 records=chunk,
-                columns=("time", "controller_id", "battery_v", "door_open"),
+                columns=("time", "controller_id", "battery_pct", "door_open"),
             )
             inserted_tel += len(chunk)
             if inserted_tel % progress_every < args.batch_size:

@@ -12,10 +12,10 @@ function isOnline(c: Controller): boolean {
   );
 }
 
-function batteryClass(v: number | null): string {
-  if (v === null) return 'text-gray-400';
-  if (v < 2.0) return 'text-red-600';
-  if (v < 2.5) return 'text-orange-500';
+function batteryClass(pct: number | null): string {
+  if (pct === null) return 'text-gray-400';
+  if (pct < 20) return 'text-red-600';
+  if (pct < 50) return 'text-orange-500';
   return 'text-gray-500';
 }
 
@@ -87,13 +87,11 @@ function ControllerTile({ controller }: { controller: Controller }) {
 
       <div className="flex items-center gap-3 text-xs">
         <span
-          className={batteryClass(latest.battery_v)}
-          title="Battery voltage"
+          className={batteryClass(latest.battery_pct)}
+          title="Battery level"
         >
           🔋{' '}
-          {latest.battery_v !== null
-            ? `${latest.battery_v.toFixed(1)}V`
-            : '—'}
+          {latest.battery_pct !== null ? `${latest.battery_pct}%` : '—'}
         </span>
         {latest.door_open !== null && (
           <span

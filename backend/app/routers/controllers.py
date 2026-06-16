@@ -161,7 +161,7 @@ async def _build_controller_detail(
         nodes=node_outs,
         latest_telemetry=LatestTelemetry(
             time=tlm.time if tlm is not None else None,
-            battery_v=tlm.battery_v if tlm is not None else None,
+            battery_pct=tlm.battery_pct if tlm is not None else None,
             door_open=tlm.door_open if tlm is not None else None,
         ),
     )
@@ -240,7 +240,8 @@ async def _fetch_controller_telemetry(
     """Battery + door state series for the controller.
 
     No ownership check — caller does that. Bucketed mode averages
-    ``battery_v`` (smooth) and uses TimescaleDB's ``last(door_open, time)``
+    ``battery_pct`` (rounded to int — the column is already a 0..100
+    integer percentage) and uses TimescaleDB's ``last(door_open, time)``
     for door state (the meaningful aggregate — the bucket's last known
     door state).
     """
@@ -250,7 +251,7 @@ async def _fetch_controller_telemetry(
     if bucket is None:
         sql = text(
             """
-            SELECT time, battery_v, door_open
+            SELECT time, battery_pct, door_open
             FROM controller_telemetry
             WHERE controller_id = :cid
               AND time >= :from_time AND time < :to_time
@@ -263,7 +264,7 @@ async def _fetch_controller_telemetry(
         sql = text(
             f"""
             SELECT time_bucket('{interval_str}'::interval, time) AS time,
-                   AVG(battery_v)::REAL AS battery_v,
+                   ROUND(AVG(battery_pct))::int AS battery_pct,
                    last(door_open, time) AS door_open
             FROM controller_telemetry
             WHERE controller_id = :cid
@@ -285,7 +286,7 @@ async def _fetch_controller_telemetry(
     )
     return [
         TelemetryPointOut(
-            time=row.time, battery_v=row.battery_v, door_open=row.door_open
+            time=row.time, battery_pct=row.battery_pct, door_open=row.door_open
         )
         for row in result
     ]
@@ -356,7 +357,7 @@ async def list_controllers(
     telemetry_sql = text(
         """
         SELECT DISTINCT ON (controller_id)
-               controller_id, time, battery_v, door_open
+               controller_id, time, battery_pct, door_open
         FROM controller_telemetry
         WHERE controller_id = ANY(:cids)
         ORDER BY controller_id, time DESC
@@ -392,7 +393,9 @@ async def list_controllers(
                 temperature_avg=(
                     reading.temperature_avg if reading is not None else None
                 ),
-                battery_v=telemetry.battery_v if telemetry is not None else None,
+                battery_pct=(
+                    telemetry.battery_pct if telemetry is not None else None
+                ),
                 door_open=telemetry.door_open if telemetry is not None else None,
                 any_node_error=(
                     bool(reading.any_node_error) if reading is not None else False

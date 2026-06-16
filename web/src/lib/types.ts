@@ -19,7 +19,7 @@ export type GatewayBrief = {
 export type ControllerLatest = {
   time: string | null;
   temperature_avg: number | null;
-  battery_v: number | null;
+  battery_pct: number | null;
   door_open: boolean | null;
   any_node_error: boolean;
 };
@@ -53,7 +53,7 @@ export type NodeOut = {
 
 export type LatestTelemetry = {
   time: string | null;
-  battery_v: number | null;
+  battery_pct: number | null;
   door_open: boolean | null;
 };
 
@@ -74,7 +74,7 @@ export type ReadingPoint = {
 
 export type TelemetryPoint = {
   time: string;
-  battery_v: number | null;
+  battery_pct: number | null;
   door_open: boolean | null;
 };
 

@@ -247,7 +247,7 @@ class ControllerTelemetry(Base):
         primary_key=True,
         nullable=False,
     )
-    battery_v: Mapped[float | None] = mapped_column(REAL, nullable=True)
+    battery_pct: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     door_open: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     __table_args__ = (

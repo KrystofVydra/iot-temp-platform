@@ -3,7 +3,7 @@
 Subscribes to MQTT, decodes telemetry payloads under the new topology
 (gateway → controller → node), and writes:
   * one ``node_readings`` row per message (per-node temperature/lux/err)
-  * one ``controller_telemetry`` row per message (per-controller battery_v/door_open)
+  * one ``controller_telemetry`` row per message (per-controller battery_pct/door_open)
 
 Unknown controllers (sn we've never seen on this gateway) are recorded in
 ``pending_controllers`` for the admin to accept before any readings land —
@@ -148,8 +148,10 @@ async def _handle_message(topic: str, payload_bytes: bytes) -> None:
                 )
         err = payload.node.err
 
-        # 5. Build the per-controller telemetry (battery + door).
-        battery_v = round(1.4 + (payload.b / 255.0) * 2.2, 3)
+        # 5. Build the per-controller telemetry (battery + door). Firmware
+        # sends `b` as uint8 0..255 mapping linearly to 1.4..3.6 V; we store
+        # it as a 0..100 % integer (clamped) to keep the API surface simple.
+        battery_pct = max(0, min(100, round((payload.b / 255.0) * 100)))
         door_open = payload.d == 1
 
         session.add(
@@ -165,7 +167,7 @@ async def _handle_message(topic: str, payload_bytes: bytes) -> None:
             ControllerTelemetry(
                 time=now,
                 controller_id=controller.id,
-                battery_v=battery_v,
+                battery_pct=battery_pct,
                 door_open=door_open,
             )
         )
