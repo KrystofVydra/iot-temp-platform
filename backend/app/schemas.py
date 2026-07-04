@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 # ===========================================================================
 # Auth / user-management shared between /auth and /admin/users/*
@@ -376,3 +376,55 @@ class TestNotificationIn(BaseModel):
     """POST /admin/users/{user_id}/notifications/test body."""
 
     kind: str
+
+
+# ===========================================================================
+# Push tokens (Round 4 Phase 4D)
+# ===========================================================================
+
+
+class PushTokenIn(BaseModel):
+    """POST /me/push-tokens body — device registers its Expo push token."""
+
+    token: str = Field(min_length=1, max_length=200)
+    platform: Literal["ios", "android"]
+    device_name: str | None = Field(default=None, max_length=255)
+    app_version: str | None = Field(default=None, max_length=50)
+
+    @field_validator("token")
+    @classmethod
+    def validate_expo_token(cls, v: str) -> str:
+        if not v.startswith("ExponentPushToken["):
+            raise ValueError("must be an Expo push token (ExponentPushToken[...])")
+        return v
+
+
+class PushTokenOut(BaseModel):
+    id: int
+    token: str
+    platform: str
+    device_name: str | None
+    app_version: str | None
+    created_at: datetime
+    last_used_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeregisterPushTokenIn(BaseModel):
+    """POST /me/push-tokens/deregister body."""
+
+    token: str = Field(min_length=1, max_length=200)
+
+
+class TestPushIn(BaseModel):
+    """POST /me/push-tokens/{token_id}/test body — optional custom text."""
+
+    title: str | None = Field(default=None, max_length=100)
+    body: str | None = Field(default=None, max_length=500)
+
+
+class TestPushOut(BaseModel):
+    ticket_id: str | None  # None if Expo returned no id (error case)
+    status: str  # "ok" | "error"
+    message: str | None  # Expo's error message on failure

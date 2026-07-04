@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import admin, auth, controllers, health, notifications
+from .routers import admin, auth, controllers, health, notifications, push_tokens
 
 settings = get_settings()
 logging.basicConfig(
@@ -36,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(controllers.router)
     app.include_router(notifications.router)
+    app.include_router(push_tokens.router)
     app.include_router(admin.router)
     return app
 

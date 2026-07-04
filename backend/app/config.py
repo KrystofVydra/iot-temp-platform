@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # from inside the SSH command admins paste on the VPS to provision
     # device credentials. Override in env if the resource is renamed.
     MOSQUITTO_RESOURCE_NAME: str = "iot-mosquitto"
+    # Expo push access token (authenticated Expo Push API). Empty disables
+    # the Authorization header — Expo still accepts unauthenticated sends,
+    # but authenticated sends are required for the enhanced security setting.
+    EXPO_ACCESS_TOKEN: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     MQTT_PASSWORD: str
     MQTT_TOPIC: str = "devices/+/telemetry"
     LOG_LEVEL: str = "INFO"
+    # Expo push access token (authenticated Expo Push API). Shared with the
+    # backend; the detector uses it to deliver notifications to mobile devices.
+    EXPO_ACCESS_TOKEN: str = ""
 
 
 @cache

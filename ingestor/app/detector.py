@@ -231,6 +231,13 @@ async def open_notification(
         node_id,
         details,
     )
+    # Fire push notification (best-effort, never blocks the notification flow)
+    try:
+        from .push import send_push_for_notification
+
+        await send_push_for_notification(session, row, event="opened")
+    except Exception:
+        log.exception("push send failed for opened notification id=%s", row.id)
     return row
 
 
@@ -247,6 +254,15 @@ async def resolve_notification(
         notification.user_id,
         notification.controller_id,
     )
+    # Fire push notification (best-effort, never blocks the notification flow)
+    try:
+        from .push import send_push_for_notification
+
+        await send_push_for_notification(session, notification, event="resolved")
+    except Exception:
+        log.exception(
+            "push send failed for resolved notification id=%s", notification.id
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -71,6 +71,9 @@ class User(Base):
     notifications: Mapped[list[Notification]] = relationship(
         "Notification", back_populates="user", cascade="all, delete-orphan"
     )
+    push_tokens: Mapped[list[PushToken]] = relationship(
+        "PushToken", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Gateway(Base):
@@ -395,6 +398,38 @@ class Notification(Base):
     )
 
     user: Mapped[User] = relationship("User", back_populates="notifications")
+
+
+class PushToken(Base):
+    """One Expo push token registered by a mobile device.
+
+    ``token`` is globally unique — re-registering a device under a new
+    account moves the row (see the register endpoint's upsert-by-token).
+    """
+
+    __tablename__ = "push_tokens"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    token: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    platform: Mapped[str] = mapped_column(String(10), nullable=False)
+    device_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    app_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+    last_used_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    user: Mapped[User] = relationship("User", back_populates="push_tokens")
 
 
 class AuthToken(Base):
