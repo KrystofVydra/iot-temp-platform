@@ -52,16 +52,28 @@ class User(Base):
     )
 
     gateways: Mapped[list[Gateway]] = relationship(
-        "Gateway", back_populates="user"
+        "Gateway",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     notification_settings: Mapped[list[NotificationSetting]] = relationship(
-        "NotificationSetting", back_populates="user", cascade="all, delete-orphan"
+        "NotificationSetting",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     notifications: Mapped[list[Notification]] = relationship(
-        "Notification", back_populates="user", cascade="all, delete-orphan"
+        "Notification",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     push_tokens: Mapped[list[PushToken]] = relationship(
-        "PushToken", back_populates="user", cascade="all, delete-orphan"
+        "PushToken",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -92,7 +104,10 @@ class Gateway(Base):
 
     user: Mapped[User] = relationship("User", back_populates="gateways")
     controllers: Mapped[list[Controller]] = relationship(
-        "Controller", back_populates="gateway"
+        "Controller",
+        back_populates="gateway",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -122,7 +137,10 @@ class Controller(Base):
         "Gateway", back_populates="controllers"
     )
     nodes: Mapped[list[Node]] = relationship(
-        "Node", back_populates="controller"
+        "Node",
+        back_populates="controller",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     __table_args__ = (

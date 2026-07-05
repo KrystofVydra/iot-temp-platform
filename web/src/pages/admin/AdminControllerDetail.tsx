@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
+import { ConfirmDeleteModal } from '../../components/ConfirmDeleteModal';
 import { ControllerChart } from '../../components/ControllerChart';
 import { Modal } from '../../components/Modal';
 import { NodeTile } from '../../components/NodeTile';
@@ -32,6 +33,7 @@ export function AdminControllerDetail() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [editNode, setEditNode] = useState<NodeOut | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (controller.data) {
@@ -76,15 +78,10 @@ export function AdminControllerDetail() {
     }
   };
 
-  const handleDelete = async () => {
-    if (
-      !window.confirm(
-        `Delete controller ${c.name}? All of its nodes and readings will be lost.`,
-      )
-    )
-      return;
+  const handleConfirmDelete = async () => {
     try {
       await deleteController.mutateAsync(controllerId);
+      setConfirmOpen(false);
       navigate(`/admin/gateways/${c.gateway.id}`);
     } catch (e) {
       alert((e as Error).message || 'Unable to delete.');
@@ -153,7 +150,7 @@ export function AdminControllerDetail() {
             </button>
             <button
               type="button"
-              onClick={handleDelete}
+              onClick={() => setConfirmOpen(true)}
               className="px-3 py-1 text-sm bg-red-50 hover:bg-red-100 rounded text-red-700"
             >
               Delete controller
@@ -222,6 +219,20 @@ export function AdminControllerDetail() {
       {editNode && (
         <EditNodeModal node={editNode} onClose={() => setEditNode(null)} />
       )}
+
+      <ConfirmDeleteModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={handleConfirmDelete}
+        title="Delete controller"
+        entityName={c.name}
+        description={`All of ${c.name}'s nodes and their measurement history will be permanently deleted.`}
+        showDownloadOption
+        onDownload={() => {
+          // TODO: implement data export before delete (Phase 5).
+        }}
+        isPending={deleteController.isPending}
+      />
     </div>
   );
 }
