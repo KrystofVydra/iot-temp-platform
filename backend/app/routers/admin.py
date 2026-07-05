@@ -47,6 +47,7 @@ from ..models import (
 from ..models import Session as UserSession
 from ..notification_messages import build_summary
 from ..notification_validation import validate_thresholds
+from ..push import send_push_for_notification
 from ..schemas import (
     AcceptPendingControllerIn,
     AdminNotificationListOut,
@@ -1404,6 +1405,14 @@ async def admin_fire_test_notification(
     db.add(row)
     await db.commit()
     await db.refresh(row)
+    # Best-effort push: the row is already persisted, so a push failure must
+    # not fail the endpoint. The detector's open_notification path does this
+    # for real notifications; admin test-fires insert the row directly and so
+    # need the same call here.
+    try:
+        await send_push_for_notification(db, row, event="opened")
+    except Exception:
+        log.exception("push send failed for admin test notification id=%s", row.id)
     log.info(
         "admin fired test notification kind=%s user=%s id=%s subject=%s",
         payload.kind,
