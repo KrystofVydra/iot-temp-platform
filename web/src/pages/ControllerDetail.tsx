@@ -68,6 +68,7 @@ export function ControllerDetail() {
 
       <ControllerChart
         data={readings.data}
+        telemetry={telemetry.data}
         range={range}
         setRange={setRange}
         isLoading={readings.isLoading}

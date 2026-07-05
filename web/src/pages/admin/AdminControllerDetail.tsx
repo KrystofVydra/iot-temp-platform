@@ -7,6 +7,7 @@ import { NodeTile } from '../../components/NodeTile';
 import {
   useAdminController,
   useAdminControllerReadings,
+  useAdminControllerTelemetry,
   useDeleteController,
   useDeleteNode,
   useUpdateController,
@@ -22,6 +23,7 @@ export function AdminControllerDetail() {
 
   const controller = useAdminController(controllerId);
   const readings = useAdminControllerReadings(controllerId, range);
+  const telemetry = useAdminControllerTelemetry(controllerId, range);
   const updateController = useUpdateController();
   const deleteController = useDeleteController();
 
@@ -179,6 +181,7 @@ export function AdminControllerDetail() {
 
       <ControllerChart
         data={readings.data}
+        telemetry={telemetry.data}
         range={range}
         setRange={setRange}
         isLoading={readings.isLoading}
