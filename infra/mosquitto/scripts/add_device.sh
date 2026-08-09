@@ -41,7 +41,7 @@ if [ -z "$PASSWORD" ]; then
 fi
 
 mosquitto_passwd -b "$PASSWORD_FILE" "$DEVICE_KEY" "$PASSWORD"
-chown root:root "$PASSWORD_FILE" && chmod 0700 "$PASSWORD_FILE"
+chown mosquitto:mosquitto "$PASSWORD_FILE" && chmod 0640 "$PASSWORD_FILE"
 
 # Append a per-device ACL block confining this user to its own topic tree.
 {
@@ -50,7 +50,7 @@ chown root:root "$PASSWORD_FILE" && chmod 0700 "$PASSWORD_FILE"
     echo "user ${DEVICE_KEY}"
     echo "topic readwrite devices/${DEVICE_KEY}/#"
 } >> "$ACL_FILE"
-chown root:root "$ACL_FILE" && chmod 0700 "$ACL_FILE"
+chown mosquitto:mosquitto "$ACL_FILE" && chmod 0640 "$ACL_FILE"
 
 # SIGHUP makes Mosquitto re-read passwords + ACL without dropping connections.
 # In the official image Mosquitto runs as PID 1.
