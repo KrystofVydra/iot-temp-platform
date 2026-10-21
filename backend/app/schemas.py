@@ -56,6 +56,10 @@ class GatewayForUserOut(BaseModel):
     mqtt_provisioned: bool
     created_at: datetime
     last_seen_at: datetime | None
+    # Connection source the gateway last reported on: 0 = WiFi,
+    # 1 = LTE fallback, None = never reported / pre-feature.
+    last_source: int | None
+    last_source_changed_at: datetime | None
     controller_count: int
 
 
@@ -94,6 +98,10 @@ class GatewayBrief(BaseModel):
     id: int
     device_key: str
     name: str
+    # Connection source the gateway last reported on: 0 = WiFi,
+    # 1 = LTE fallback, None = never reported / pre-feature.
+    last_source: int | None
+    last_source_changed_at: datetime | None
 
 
 class GatewayBriefDetail(BaseModel):
@@ -103,6 +111,10 @@ class GatewayBriefDetail(BaseModel):
     device_key: str
     name: str
     location: str | None
+    # Connection source the gateway last reported on: 0 = WiFi,
+    # 1 = LTE fallback, None = never reported / pre-feature.
+    last_source: int | None
+    last_source_changed_at: datetime | None
 
 
 class ControllerLatest(BaseModel):
@@ -170,11 +182,12 @@ class ReadingsPointOut(BaseModel):
 
 
 class TelemetryPointOut(BaseModel):
-    """Single time-bucket of controller battery + door state."""
+    """Single time-bucket of controller battery + door + connection source."""
 
     time: datetime
     battery_pct: int | None
     door_open: bool | None
+    source: int | None
 
 
 # ===========================================================================
@@ -192,6 +205,10 @@ class GatewayAdminOut(BaseModel):
     mqtt_provisioned: bool
     created_at: datetime
     last_seen_at: datetime | None
+    # Connection source the gateway last reported on: 0 = WiFi,
+    # 1 = LTE fallback, None = never reported / pre-feature.
+    last_source: int | None
+    last_source_changed_at: datetime | None
     owner: OwnerOut
     controller_count: int
 

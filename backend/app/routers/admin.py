@@ -133,6 +133,8 @@ def _gateway_admin_out(
         mqtt_provisioned=gateway.mqtt_provisioned,
         created_at=gateway.created_at,
         last_seen_at=gateway.last_seen_at,
+        last_source=gateway.last_source,
+        last_source_changed_at=gateway.last_source_changed_at,
         owner=_owner_out(owner),
         controller_count=controller_count,
     )
@@ -288,6 +290,8 @@ async def get_user(
             mqtt_provisioned=g.mqtt_provisioned,
             created_at=g.created_at,
             last_seen_at=g.last_seen_at,
+            last_source=g.last_source,
+            last_source_changed_at=g.last_source_changed_at,
             controller_count=ccnt,
         )
         for g, ccnt in gateway_rows
@@ -534,6 +538,8 @@ async def get_gateway(
         mqtt_provisioned=gateway.mqtt_provisioned,
         created_at=gateway.created_at,
         last_seen_at=gateway.last_seen_at,
+        last_source=gateway.last_source,
+        last_source_changed_at=gateway.last_source_changed_at,
         owner=_owner_out(owner),
         controller_count=len(controllers_out),
         controllers=controllers_out,

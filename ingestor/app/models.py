@@ -101,6 +101,12 @@ class Gateway(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    # Link the gateway last reported on: 0 = WiFi, 1 = LTE fallback.
+    # NULL until the first message carrying a source arrives.
+    last_source: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    last_source_changed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
     user: Mapped[User] = relationship("User", back_populates="gateways")
     controllers: Mapped[list[Controller]] = relationship(
@@ -253,6 +259,8 @@ class ControllerTelemetry(Base):
     )
     battery_pct: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     door_open: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Connection source as of this message: 0 = WiFi, 1 = LTE fallback.
+    source: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     __table_args__ = (
         Index(

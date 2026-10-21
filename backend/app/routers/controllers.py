@@ -157,6 +157,8 @@ async def _build_controller_detail(
             device_key=gateway.device_key,
             name=gateway.name,
             location=gateway.location,
+            last_source=gateway.last_source,
+            last_source_changed_at=gateway.last_source_changed_at,
         ),
         nodes=node_outs,
         latest_telemetry=LatestTelemetry(
@@ -242,13 +244,13 @@ async def _fetch_controller_telemetry(
     bucket: str | None,
     limit: int,
 ) -> list[TelemetryPointOut]:
-    """Battery + door state series for the controller.
+    """Battery + door + connection-source series for the controller.
 
     No ownership check — caller does that. Bucketed mode averages
     ``battery_pct`` (rounded to int — the column is already a 0..100
-    integer percentage) and uses TimescaleDB's ``last(door_open, time)``
-    for door state (the meaningful aggregate — the bucket's last known
-    door state).
+    integer percentage) and uses TimescaleDB's ``last(..., time)`` for
+    ``door_open`` and ``source`` (the meaningful aggregate for both — the
+    bucket's last known state, not a mean of flags).
     """
     if to <= from_:
         raise HTTPException(status_code=400, detail="`to` must be greater than `from`")
@@ -256,7 +258,7 @@ async def _fetch_controller_telemetry(
     if bucket is None:
         sql = text(
             """
-            SELECT time, battery_pct, door_open
+            SELECT time, battery_pct, door_open, source
             FROM controller_telemetry
             WHERE controller_id = :cid
               AND time >= :from_time AND time < :to_time
@@ -274,7 +276,8 @@ async def _fetch_controller_telemetry(
             f"""
             SELECT time_bucket('{interval_str}'::interval, time) AS time,
                    ROUND(AVG(battery_pct))::int AS battery_pct,
-                   last(door_open, time) AS door_open
+                   last(door_open, time) AS door_open,
+                   last(source, time) AS source
             FROM controller_telemetry
             WHERE controller_id = :cid
               AND time >= :from_time AND time < :to_time
@@ -295,7 +298,10 @@ async def _fetch_controller_telemetry(
     )
     return [
         TelemetryPointOut(
-            time=row.time, battery_pct=row.battery_pct, door_open=row.door_open
+            time=row.time,
+            battery_pct=row.battery_pct,
+            door_open=row.door_open,
+            source=row.source,
         )
         for row in result
     ]
@@ -393,7 +399,11 @@ async def list_controllers(
             name=c.name,
             location=c.location,
             gateway=GatewayBrief(
-                id=g.id, device_key=g.device_key, name=g.name
+                id=g.id,
+                device_key=g.device_key,
+                name=g.name,
+                last_source=g.last_source,
+                last_source_changed_at=g.last_source_changed_at,
             ),
             node_count=node_counts.get(c.id, 0),
             last_seen_at=c.last_seen_at,

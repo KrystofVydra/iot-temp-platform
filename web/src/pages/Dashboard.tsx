@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
+import { ConnectionSourceIcon } from '../components/ConnectionSourceIcon';
 import { useControllers } from '../lib/hooks';
 import type { Controller } from '../lib/types';
 
@@ -62,7 +63,15 @@ function ControllerTile({ controller }: { controller: Controller }) {
     >
       <div className="flex justify-between items-start mb-2 gap-2">
         <div className="min-w-0">
-          <div className="font-semibold truncate">{controller.name}</div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div className="font-semibold truncate">{controller.name}</div>
+            <ConnectionSourceIcon
+              source={controller.gateway.last_source}
+              changedAt={controller.gateway.last_source_changed_at}
+              lastSeenAt={controller.last_seen_at}
+              size="sm"
+            />
+          </div>
           <div className="text-xs text-gray-500 truncate">
             via {controller.gateway.name}
           </div>

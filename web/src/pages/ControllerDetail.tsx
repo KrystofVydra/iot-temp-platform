@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
+import { ConnectionSourceIcon } from '../components/ConnectionSourceIcon';
 import { ControllerChart } from '../components/ControllerChart';
 import { NodeTile } from '../components/NodeTile';
 import {
@@ -46,7 +47,15 @@ export function ControllerDetail() {
           {c.gateway.name} <span className="text-gray-300">›</span>{' '}
           <span className="text-gray-700 font-medium">{c.name}</span>
         </div>
-        <h1 className="text-2xl font-bold">{c.name}</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold">{c.name}</h1>
+          <ConnectionSourceIcon
+            source={c.gateway.last_source}
+            changedAt={c.gateway.last_source_changed_at}
+            lastSeenAt={latestTel.time}
+            size="md"
+          />
+        </div>
         {c.location && (
           <p className="text-gray-500 text-sm">{c.location}</p>
         )}

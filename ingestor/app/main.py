@@ -3,7 +3,8 @@
 Subscribes to MQTT, decodes telemetry payloads under the new topology
 (gateway → controller → node), and writes:
   * one ``node_readings`` row per message (per-node temperature/lux/err)
-  * one ``controller_telemetry`` row per message (per-controller battery_pct/door_open)
+  * one ``controller_telemetry`` row per message (per-controller
+    battery_pct/door_open/source)
 
 Unknown controllers (sn we've never seen on this gateway) are recorded in
 ``pending_controllers`` for the admin to accept before any readings land —
@@ -101,6 +102,13 @@ async def _handle_message(topic: str, payload_bytes: bytes) -> None:
             return
         gateway.last_seen_at = now
 
+        # 1b. Connection source (0 = WiFi, 1 = LTE fallback). Only stamp
+        # ``last_source_changed_at`` on an actual flip, so the UI can render
+        # "LTE since <time>" rather than "LTE since <last message>".
+        if gateway.last_source != payload.source:
+            gateway.last_source = payload.source
+            gateway.last_source_changed_at = now
+
         # 2. Controller — accepted controllers only. Unknowns get staged.
         controller = (
             await session.execute(
@@ -162,12 +170,13 @@ async def _handle_message(topic: str, payload_bytes: bytes) -> None:
                 )
         err = payload.node.err
 
-        # 5. Build the per-controller telemetry (battery + door). Firmware
+        # 5. Build the per-controller telemetry (battery + door + source). Firmware
         # sends `b` as a 0..100 percentage directly (each revision handles
         # its own chemistry → percentage mapping); Pydantic already enforced
         # the range on parse.
         battery_pct = payload.b
         door_open = payload.d == 1
+        source = payload.source
 
         session.add(
             NodeReading(
@@ -184,6 +193,7 @@ async def _handle_message(topic: str, payload_bytes: bytes) -> None:
                 controller_id=controller.id,
                 battery_pct=battery_pct,
                 door_open=door_open,
+                source=source,
             )
         )
         await session.commit()

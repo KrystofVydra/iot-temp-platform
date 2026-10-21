@@ -14,6 +14,10 @@ export type GatewayBrief = {
   device_key: string;
   name: string;
   location?: string | null;
+  // Connection source the gateway last reported on: 0 = WiFi,
+  // 1 = LTE fallback, null = never reported / pre-feature.
+  last_source: number | null;
+  last_source_changed_at: string | null;
 };
 
 export type ControllerLatest = {
@@ -76,6 +80,7 @@ export type TelemetryPoint = {
   time: string;
   battery_pct: number | null;
   door_open: boolean | null;
+  source: number | null;
 };
 
 export type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d';
@@ -103,6 +108,10 @@ export type GatewayForUser = {
   location: string | null;
   created_at: string;
   last_seen_at: string | null;
+  // Connection source the gateway last reported on: 0 = WiFi,
+  // 1 = LTE fallback, null = never reported / pre-feature.
+  last_source: number | null;
+  last_source_changed_at: string | null;
   mqtt_provisioned: boolean;
   controller_count: number;
 };
@@ -124,6 +133,10 @@ export type GatewayAdmin = {
   location: string | null;
   created_at: string;
   last_seen_at: string | null;
+  // Connection source the gateway last reported on: 0 = WiFi,
+  // 1 = LTE fallback, null = never reported / pre-feature.
+  last_source: number | null;
+  last_source_changed_at: string | null;
   mqtt_provisioned: boolean;
   owner: Owner;
   controller_count: number;
