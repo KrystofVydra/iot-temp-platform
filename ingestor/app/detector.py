@@ -6,7 +6,7 @@ Two evaluation paths populate the ``notifications`` table:
   It looks at the freshly-stored reading for one controller / one node and
   opens or resolves all of the per-message kinds (temp_safe,
   temp_preferred, temp_drift, battery_critical, battery_low,
-  node_error_single, node_error_cumulative).
+  node_error_single, node_error_cumulative, gateway_on_lte).
 
 * :func:`evaluate_time_based` runs on a 30-second tick. It scans for
   stale conditions that have nothing to do with any single message —
@@ -65,6 +65,9 @@ _KIND_DEFAULTS: dict[str, dict[str, float]] = {
     "battery_critical": {"critical_pct": 10},
     "battery_low": {"low_pct": 25},
 }
+
+# ``gateways.last_source`` value meaning "on cellular backup" (0 is WiFi).
+_SOURCE_LTE = 1
 
 # Inside-band buffer for resolve hysteresis on the temperature kinds.
 _TEMP_HYSTERESIS_C = 0.5
@@ -398,6 +401,11 @@ async def evaluate_value_based(
 
     # Node errors: cumulative inhibits single.
     await _eval_node_errors(session, settings, controller, state, now, user_id)
+
+    # Gateway-scoped, but evaluated here rather than on the time-based tick:
+    # ``_handle_message`` has already written the new ``last_source`` by the
+    # time we run, so a flip is visible on the very message that caused it.
+    await _eval_gateway_on_lte(session, settings, gateway, now, user_id)
 
 
 @dataclass
@@ -778,6 +786,51 @@ async def _eval_node_errors(
 # ---------------------------------------------------------------------------
 # Time-based evaluation (30-second tick)
 # ---------------------------------------------------------------------------
+
+
+async def _eval_gateway_on_lte(
+    session: AsyncSession,
+    settings: dict[str, _MergedSetting],
+    gateway: Gateway,
+    now: datetime,
+    user_id: int,
+) -> None:
+    """Open/resolve gateway_on_lte from the gateway's current source.
+
+    A plain state read — no threshold and no hysteresis: the ingestor only
+    moves ``last_source`` when the firmware reports a different value, so
+    there is nothing to flap against.
+    """
+    setting = settings.get("gateway_on_lte")
+    if setting is None or not setting.enabled:
+        return
+    if gateway.last_source is None:
+        return  # source never observed on this gateway — say nothing
+
+    on_lte = gateway.last_source == _SOURCE_LTE
+    active = await find_active_notification(
+        session, user_id, "gateway_on_lte", gateway_id=gateway.id
+    )
+    if on_lte:
+        if active is None:
+            await open_notification(
+                session,
+                user_id=user_id,
+                kind="gateway_on_lte",
+                severity=setting.severity,
+                scope=setting.scope,
+                subject_name=gateway.name,
+                details={
+                    "since": (
+                        gateway.last_source_changed_at.isoformat()
+                        if gateway.last_source_changed_at
+                        else None
+                    ),
+                },
+                gateway_id=gateway.id,
+            )
+    elif active is not None:
+        await resolve_notification(session, active, now)
 
 
 async def evaluate_time_based(session: AsyncSession, now: datetime) -> None:

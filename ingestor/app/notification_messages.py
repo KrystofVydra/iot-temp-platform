@@ -58,6 +58,7 @@ _TEMPLATES: dict[str, str] = {
     "node_error_cumulative": (
         "{subject_name}: {error_count} nodes reporting errors"
     ),
+    "gateway_on_lte": "{subject_name} is on cellular backup (WiFi lost)",
 }
 
 # Test templates — structurally identical to the real ones above, but every
@@ -96,6 +97,8 @@ _TEST_TEMPLATES: dict[str, str] = {
     "node_error_cumulative": (
         "{subject_name}: TEST_VALUE nodes reporting errors"
     ),
+    # No value placeholder in this one, so real and test text are identical.
+    "gateway_on_lte": "{subject_name} is on cellular backup (WiFi lost)",
 }
 
 

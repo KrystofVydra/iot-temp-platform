@@ -1306,6 +1306,10 @@ def _build_test_details(
             "offline_controller_count": max(2, len(sibling_controller_ids)),
             "offline_controller_ids": sibling_controller_ids,
         }
+    if kind == "gateway_on_lte":
+        # The template has no placeholder to fill; ``since`` is carried for
+        # parity with the detector's payload so future UI can use it.
+        return {**base, "since": now.isoformat()}
     if kind == "battery_critical":
         crit = int(thresholds.get("critical_pct", 10))
         return {**base, "observed_pct": max(0, crit - 2), "threshold_pct": crit}
